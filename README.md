@@ -12,7 +12,7 @@ This repository currently proves the **build / package / deploy / launch** path 
 - Config file: `config/dalicam.conf`
 - Runtime app data: stored under the user profile on the SD-backed filesystem in `~/.local/share/DaliCam` by default
 - Runtime settings file: `~/.local/share/DaliCam/settings.ini`
-- Runtime folders: `input/`, `generated/`, `temp/`, `logs/`
+- Runtime folders: `input/` (camera captures), `generated/` (Gemini outputs), `temp/`, `logs/`
 - Allowed image models: `gemini-nano-banana-2.1`, `gemini-3.1-flash-lite-image`, `gemini-3-pro-image`
 - Personality presets: Dali first, with room for Vector and custom presets later
 
@@ -56,6 +56,11 @@ This is meant to install only the app package over SSH, not replace the Cardpute
 - The current app is intentionally simple.
 - The prompt box now lives on the main screen.
 - Pressing Enter on the main screen sends the prompt directly to the Gemini image generation flow; it does not need a chat-style command.
+- The main screen now includes separate **Settings** and **Capture** buttons.
+- Camera photos are saved under `input/camera/` and Gemini outputs are saved under `generated/`.
+- After capture, the app shows a small confirm prompt:
+  - **Y** uses the captured photo with the current prompt/default Dali prompt
+  - **N** deletes the captured photo and returns to the prompt screen
 - We are using this repo as the base shell for the final app.
 - The release package is designed to install over SSH with `sudo -n dpkg -i` without replacing the CardputerZero OS.
 - If the prompt is left blank, the Dali default prompt is used automatically.

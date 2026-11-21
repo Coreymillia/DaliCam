@@ -134,9 +134,28 @@ public:
 
 private:
     bool handle_key(uint32_t key, bool long_pressed) {
-        if (view_model_.current_page() == model::AppPage::Butter &&
-            key == platform::kKeyPrintScreen) {
-            return screen_manager_.handle_key(key, long_pressed);
+        if (key == platform::kKeyHelp) {
+            if (!long_pressed) {
+                toast_->hide();
+                if (help_popup_->visible()) {
+                    help_popup_->hide();
+                }
+                else {
+                    help_popup_->show(view_model_.current_page());
+                }
+            }
+            return true;
+        }
+
+        if (help_popup_->visible()) {
+            if (key == LV_KEY_ESC && !long_pressed) {
+                help_popup_->hide();
+            }
+            return true;
+        }
+
+        if (screen_manager_.handle_key(key, long_pressed)) {
+            return true;
         }
 
         if (key == platform::kKeyPrintScreen) {
@@ -158,31 +177,6 @@ private:
                                  3200);
                 }
             }
-            return true;
-        }
-
-        if (key == platform::kKeyHelp) {
-            if (!long_pressed) {
-                toast_->hide();
-                if (help_popup_->visible()) {
-                    help_popup_->hide();
-                }
-                else {
-                    help_popup_->show(view_model_.current_page());
-                }
-            }
-            return true;
-        }
-
-        if (help_popup_->visible()) {
-            if (key == LV_KEY_ESC && !long_pressed) {
-                help_popup_->hide();
-            }
-            return true;
-        }
-
-        if (view_model_.current_page() == model::AppPage::Butter &&
-            screen_manager_.handle_key(key, long_pressed)) {
             return true;
         }
 

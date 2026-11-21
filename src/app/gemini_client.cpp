@@ -12,6 +12,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -82,6 +83,15 @@ std::string read_text_file(const std::filesystem::path& path) {
     std::ostringstream stream;
     stream << input.rdbuf();
     return stream.str();
+}
+
+std::vector<std::uint8_t> read_binary_file(const std::filesystem::path& path) {
+    std::ifstream input(path, std::ios::binary);
+    if (!input) {
+        return {};
+    }
+
+    return std::vector<std::uint8_t>(std::istreambuf_iterator<char>(input), {});
 }
 
 std::string read_file_preview(const std::filesystem::path& path, std::size_t max_chars) {
@@ -173,9 +183,62 @@ bool should_use_response_modalities(std::string_view model) {
     return model.rfind("gemini-3", 0) == 0 || model.find("preview") != std::string_view::npos;
 }
 
-std::string build_request_body(std::string_view prompt, bool use_response_modalities) {
+std::string encode_base64(const std::vector<std::uint8_t>& data) {
+    static constexpr char kAlphabet[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+    std::string output;
+    output.reserve(((data.size() + 2) / 3) * 4);
+
+    std::size_t index = 0;
+    while (index + 3 <= data.size()) {
+        const std::uint32_t value = (static_cast<std::uint32_t>(data[index]) << 16) |
+                                    (static_cast<std::uint32_t>(data[index + 1]) << 8) |
+                                    static_cast<std::uint32_t>(data[index + 2]);
+        output.push_back(kAlphabet[(value >> 18) & 0x3F]);
+        output.push_back(kAlphabet[(value >> 12) & 0x3F]);
+        output.push_back(kAlphabet[(value >> 6) & 0x3F]);
+        output.push_back(kAlphabet[value & 0x3F]);
+        index += 3;
+    }
+
+    const std::size_t remaining = data.size() - index;
+    if (remaining == 1) {
+        const std::uint32_t value = static_cast<std::uint32_t>(data[index]) << 16;
+        output.push_back(kAlphabet[(value >> 18) & 0x3F]);
+        output.push_back(kAlphabet[(value >> 12) & 0x3F]);
+        output.push_back('=');
+        output.push_back('=');
+    }
+    else if (remaining == 2) {
+        const std::uint32_t value = (static_cast<std::uint32_t>(data[index]) << 16) |
+                                    (static_cast<std::uint32_t>(data[index + 1]) << 8);
+        output.push_back(kAlphabet[(value >> 18) & 0x3F]);
+        output.push_back(kAlphabet[(value >> 12) & 0x3F]);
+        output.push_back(kAlphabet[(value >> 6) & 0x3F]);
+        output.push_back('=');
+    }
+
+    return output;
+}
+
+std::string infer_mime_type(const std::filesystem::path& path) {
+    const auto extension = path.extension().string();
+    if (extension == ".png") {
+        return "image/png";
+    }
+    if (extension == ".jpg" || extension == ".jpeg") {
+        return "image/jpeg";
+    }
+    return "image/jpeg";
+}
+
+std::string build_request_body(std::string_view prompt,
+                               bool use_response_modalities,
+                               std::string_view image_base64,
+                               std::string_view image_mime_type) {
     std::string body;
-    body.reserve(1024);
+    body.reserve(4096 + image_base64.size());
     body.append("{\n");
     body.append("  \"contents\": [\n");
     body.append("    {\n");
@@ -185,8 +248,21 @@ std::string build_request_body(std::string_view prompt, bool use_response_modali
     body.append("          \"text\": \"");
     body.append(escape_json(prompt));
     body.append("\"\n");
-    body.append("        }\n");
-    body.append("      ]\n");
+    body.append("        }");
+    if (!image_base64.empty()) {
+        body.append(",\n");
+        body.append("        {\n");
+        body.append("          \"inlineData\": {\n");
+        body.append("            \"mimeType\": \"");
+        body.append(escape_json(image_mime_type.empty() ? "image/jpeg" : image_mime_type));
+        body.append("\",\n");
+        body.append("            \"data\": \"");
+        body.append(escape_json(image_base64));
+        body.append("\"\n");
+        body.append("          }\n");
+        body.append("        }");
+    }
+    body.append("\n      ]\n");
     body.append("    }\n");
     body.append("  ],\n");
     body.append("  \"generationConfig\": {\n");
@@ -296,7 +372,8 @@ GeminiImageResult generate_image_request_impl(std::string_view api_key,
                                               std::string_view model,
                                               std::string_view prompt,
                                               const std::filesystem::path& output_path,
-                                              const std::filesystem::path& temp_dir) {
+                                              const std::filesystem::path& temp_dir,
+                                              const std::optional<std::filesystem::path>& source_image_path) {
     GeminiImageResult result;
     result.image_path = output_path;
     result.response_path = temp_dir / "gemini-response.json";
@@ -334,12 +411,27 @@ GeminiImageResult generate_image_request_impl(std::string_view api_key,
     const bool response_modalities_first = should_use_response_modalities(model);
     const bool attempt_order[] = {response_modalities_first, !response_modalities_first};
 
+    std::string image_base64;
+    std::string image_mime_type;
+    if (source_image_path && !source_image_path->empty()) {
+        const auto image_bytes = read_binary_file(*source_image_path);
+        if (image_bytes.empty()) {
+            result.message = "could not read source image for Gemini request";
+            return result;
+        }
+        image_base64 = encode_base64(image_bytes);
+        image_mime_type = infer_mime_type(*source_image_path);
+    }
+
     std::string last_error;
     for (const bool use_response_modalities : attempt_order) {
         std::string request_error;
         const auto request_path = temp_dir / "gemini-request.json";
         if (!write_text_file(request_path,
-                             build_request_body(prompt, use_response_modalities),
+                             build_request_body(prompt,
+                                                use_response_modalities,
+                                                image_base64,
+                                                image_mime_type),
                              request_error)) {
             result.message = request_error;
             return result;
@@ -425,15 +517,21 @@ GeminiImageResult generate_gemini_image_request(std::string_view api_key,
                                                 std::string_view model,
                                                 std::string_view prompt,
                                                 const std::filesystem::path& output_path,
-                                                const std::filesystem::path& temp_dir) {
-    return generate_image_request_impl(api_key, model, prompt, output_path, temp_dir);
+                                                const std::filesystem::path& temp_dir,
+                                                const std::optional<std::filesystem::path>& source_image_path) {
+    return generate_image_request_impl(api_key,
+                                       model,
+                                       prompt,
+                                       output_path,
+                                       temp_dir,
+                                       source_image_path);
 }
 
 GeminiImageResult test_gemini_image_request(std::string_view api_key,
                                            std::string_view model,
                                            const std::filesystem::path& output_path,
                                            const std::filesystem::path& temp_dir) {
-    return generate_image_request_impl(api_key, model, kTestPrompt, output_path, temp_dir);
+    return generate_image_request_impl(api_key, model, kTestPrompt, output_path, temp_dir, std::nullopt);
 }
 
 } // namespace app

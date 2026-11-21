@@ -7,6 +7,7 @@
 #pragma once
 
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
 
@@ -24,7 +25,8 @@ GeminiImageResult generate_gemini_image_request(std::string_view api_key,
                                                 std::string_view model,
                                                 std::string_view prompt,
                                                 const std::filesystem::path& output_path,
-                                                const std::filesystem::path& temp_dir);
+                                                const std::filesystem::path& temp_dir,
+                                                const std::optional<std::filesystem::path>& source_image_path = std::nullopt);
 
 GeminiImageResult test_gemini_image_request(std::string_view api_key,
                                            std::string_view model,

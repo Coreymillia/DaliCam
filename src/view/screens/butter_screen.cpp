@@ -92,8 +92,8 @@ void ButterScreen::build_content(lv_obj_t* content) {
 
     subtitle_label_ = lv_label_create(root_panel_);
     lv_label_set_text(subtitle_label_,
-                     "Up/Down switch fields. Left/Right change dropdowns. Enter saves or generates. "
-                     "PrintScreen runs a quick image test.");
+                     "Up/Down switch fields. Left/Right change dropdowns. Enter saves settings. "
+                     "Use the main screen prompt to generate images.");
     lv_obj_set_width(subtitle_label_, 296);
     lv_label_set_long_mode(subtitle_label_, LV_LABEL_LONG_WRAP);
     auto* subtitle_font = assets().load_standard_font(11, app::StandardFontWeight::Regular);
@@ -183,10 +183,12 @@ void ButterScreen::build_content(lv_obj_t* content) {
 
 bool ButterScreen::handle_key(uint32_t key, bool long_pressed) {
     if (key == platform::kKeyPrintScreen) {
-        if (long_pressed) {
-            return false;
-        }
-        return generate_image();
+        return false;
+    }
+
+    if (key == LV_KEY_ESC) {
+        view_model().show_apple_page();
+        return true;
     }
 
     if (long_pressed) {
@@ -515,7 +517,7 @@ bool ButterScreen::generate_image() {
     action_status_ = "Generating image...";
     refresh_status_display();
 
-    const auto output_path = paths_.build_output_path("gemini-image", ".png");
+    const auto output_path = paths_.build_output_path("gemini-image", ".jpg");
     const auto result = app::generate_gemini_image_request(api_key_buffer_,
                                                            selected_model(),
                                                            prompt,
