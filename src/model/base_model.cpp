@@ -13,7 +13,7 @@ const char* BaseModel::app_title() const {
 }
 
 const char* BaseModel::greeting() const {
-    return "HELLO";
+    return "DaliCam";
 }
 
 bool BaseModel::dark_mode() const {

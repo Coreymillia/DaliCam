@@ -57,7 +57,7 @@ void ScreenManager::start() {
 }
 
 void ScreenManager::show_apple_screen() {
-    load_screen(std::make_unique<screen::AppleScreen>(view_model_, assets_));
+    load_screen(std::make_unique<screen::AppleScreen>(view_model_, assets_, settings_, paths_));
     loaded_page_ = model::AppPage::Apple;
     has_loaded_page_ = true;
 }

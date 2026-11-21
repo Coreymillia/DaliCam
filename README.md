@@ -8,7 +8,7 @@ This repository currently proves the **build / package / deploy / launch** path 
 
 - App name: `DaliCam`
 - Package name: `dalicam`
-- Current UI: settings-focused screen with Gemini API key, personality selector, image model selector, and a prototype prompt/generate flow
+- Current UI: main screen prompt entry with image preview, plus a settings screen for Gemini API key, personality selector, and image model selector
 - Config file: `config/dalicam.conf`
 - Runtime app data: stored under the user profile on the SD-backed filesystem in `~/.local/share/DaliCam` by default
 - Runtime settings file: `~/.local/share/DaliCam/settings.ini`
@@ -44,7 +44,7 @@ This is meant to install only the app package over SSH, not replace the Cardpute
 
 ## Next planned work
 
-1. Move the prompt box to the main screen
+1. Polish the main screen prompt flow and preview behavior
 2. Keep settings focused on API key, model, and personality only
 3. Wire the camera capture flow
 4. Add confirm Y/N handling after capture
@@ -54,7 +54,8 @@ This is meant to install only the app package over SSH, not replace the Cardpute
 ## Notes
 
 - The current app is intentionally simple.
-- The prompt box is currently part of the prototype settings/generation flow and will move to the main screen next.
-- The Dali prompt is the current hardcoded personality target; Vector and custom personalities will follow.
+- The prompt box now lives on the main screen.
+- Pressing Enter on the main screen sends the prompt directly to the Gemini image generation flow; it does not need a chat-style command.
 - We are using this repo as the base shell for the final app.
 - The release package is designed to install over SSH with `sudo -n dpkg -i` without replacing the CardputerZero OS.
+- If the prompt is left blank, the Dali default prompt is used automatically.

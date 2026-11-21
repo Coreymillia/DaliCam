@@ -29,7 +29,7 @@ struct ShortcutSpec {
 
 constexpr std::array<ShortcutSpec, 4> kButterShortcuts = {{
     {"ESC", "Back"},
-    {"ENTER", "Save/Gen"},
+    {"ENTER", "Save"},
     {"BACKSPACE", "Delete"},
     {"PRTSCR", "Test"},
 }};

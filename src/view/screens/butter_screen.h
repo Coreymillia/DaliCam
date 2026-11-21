@@ -35,7 +35,6 @@ private:
         ApiKey,
         Personality,
         Model,
-        Prompt,
     };
 
     void build_content(lv_obj_t* content) override;
@@ -43,7 +42,6 @@ private:
     void refresh_api_key_display();
     void refresh_personality_display();
     void refresh_model_display();
-    void refresh_prompt_display();
     void refresh_status_display();
     void refresh_focus_display();
     void set_focus(FocusField field);
@@ -56,7 +54,7 @@ private:
     void select_next_personality();
     void select_personality_by_index(std::size_t index);
     bool save_settings();
-    bool generate_image(bool use_test_prompt = false);
+    bool generate_image();
     static std::size_t model_index_for(std::string_view model);
     static std::size_t personality_index_for(std::string_view personality_id);
     std::string_view selected_model() const;
@@ -70,22 +68,19 @@ private:
     app::Settings& settings_;
     const app::Paths& paths_;
     std::string api_key_buffer_;
-    std::string prompt_buffer_;
     std::size_t selected_model_index_{0};
     std::size_t selected_personality_index_{0};
-    FocusField focus_{FocusField::Prompt};
+    FocusField focus_{FocusField::ApiKey};
     lv_obj_t* root_panel_{nullptr};
     lv_obj_t* title_label_{nullptr};
     lv_obj_t* subtitle_label_{nullptr};
     lv_obj_t* api_key_card_{nullptr};
     lv_obj_t* personality_card_{nullptr};
     lv_obj_t* model_card_{nullptr};
-    lv_obj_t* prompt_card_{nullptr};
     lv_obj_t* preview_card_{nullptr};
     lv_obj_t* api_key_textarea_{nullptr};
     lv_obj_t* personality_dropdown_{nullptr};
     lv_obj_t* model_dropdown_{nullptr};
-    lv_obj_t* prompt_textarea_{nullptr};
     lv_obj_t* preview_image_{nullptr};
     lv_obj_t* preview_hint_label_{nullptr};
     lv_obj_t* status_label_{nullptr};

@@ -8,168 +8,263 @@
 
 #include "asset_manager.h"
 #include "bindings.h"
+#include "gemini_client.h"
+#include "logger.h"
+#include "paths.h"
+#include "prompt_presets.h"
+#include "settings.h"
+#include "theme.h"
+
+#include <filesystem>
+#include <string_view>
 
 namespace screen {
 namespace {
 
-struct AppleTextFontBinding {
-    lv_font_t* regular;
-    lv_font_t* bold;
-};
+constexpr std::size_t kMaxPromptLength = 512;
 
-constexpr const char* kIconKbFn          = "\uE080";
-constexpr const char* kIconKbH           = "\uE084";
-constexpr const char* kIconKbJ           = "\uE08C";
-constexpr const char* kIconKbPrintScreen = "\uE0B1";
-constexpr const char* kIconKbHelp        = "\uEA28";
-
-void cleanup_font_binding(lv_event_t* event) {
-    delete static_cast<AppleTextFontBinding*>(lv_event_get_user_data(event));
-}
-
-void apple_text_font_observer(lv_observer_t* observer, lv_subject_t* subject) {
-    auto* label = lv_observer_get_target_obj(observer);
-    auto* fonts = static_cast<AppleTextFontBinding*>(lv_observer_get_user_data(observer));
-    if (!label || !fonts) {
-        return;
-    }
-
-    auto* font = lv_subject_get_int(subject) ? fonts->bold : fonts->regular;
-    lv_obj_set_style_text_font(label, font ? font : &lv_font_montserrat_20, 0);
-}
-
-void info_visible_observer(lv_observer_t* observer, lv_subject_t* subject) {
-    auto* label = lv_observer_get_target_obj(observer);
-    if (!label) {
-        return;
-    }
-
-    if (lv_subject_get_int(subject)) {
-        lv_obj_remove_flag(label, LV_OBJ_FLAG_HIDDEN);
-    }
-    else {
-        lv_obj_add_flag(label, LV_OBJ_FLAG_HIDDEN);
-    }
+bool is_printable_key(uint32_t key) {
+    return key >= 32 && key <= 126;
 }
 
 } // namespace
 
-AppleScreen::AppleScreen(viewmodel::BaseViewModel& view_model, app::AssetManager& assets)
-    : BaseScreen(view_model, assets) {
+AppleScreen::AppleScreen(viewmodel::BaseViewModel& view_model,
+                         app::AssetManager& assets,
+                         app::Settings& settings,
+                         const app::Paths& paths)
+    : BaseScreen(view_model, assets),
+      settings_(settings),
+      paths_(paths),
+      prompt_buffer_() {
     init();
 }
 
 void AppleScreen::build_content(lv_obj_t* content) {
-    auto* group = lv_obj_create(content);
-    lv_obj_remove_style_all(group);
-    lv_obj_set_size(group, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
-    lv_obj_set_flex_flow(group, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(group, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(group, 4, 0);
-    lv_obj_clear_flag(group, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_center(group);
+    auto* panel = lv_obj_create(content);
+    lv_obj_remove_style_all(panel);
+    lv_obj_set_size(panel, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_left(panel, 12, 0);
+    lv_obj_set_style_pad_right(panel, 12, 0);
+    lv_obj_set_style_pad_top(panel, 8, 0);
+    lv_obj_set_style_pad_bottom(panel, 8, 0);
+    lv_obj_set_style_pad_row(panel, 6, 0);
+    lv_obj_set_scrollbar_mode(panel, LV_SCROLLBAR_MODE_AUTO);
+    lv_obj_add_flag(panel, LV_OBJ_FLAG_SCROLLABLE);
 
-    auto* hello = lv_label_create(group);
-    lv_label_bind_text(hello, view_model().greeting_subject(), nullptr);
-    auto* fonts = new AppleTextFontBinding{
-        assets().load_standard_font(20, app::StandardFontWeight::Regular),
-        assets().load_standard_font(20),
-    };
-    auto* initial_font = lv_subject_get_int(view_model().bold_text_subject()) ? fonts->bold : fonts->regular;
-    lv_obj_set_style_text_font(hello, initial_font ? initial_font : &lv_font_montserrat_20, 0);
-    lv_obj_add_event_cb(hello, cleanup_font_binding, LV_EVENT_DELETE, fonts);
-    lv_subject_add_observer_obj(view_model().bold_text_subject(), apple_text_font_observer, hello, fonts);
-    reactive::bind_theme(hello, view_model().dark_mode_subject(), reactive::ThemeRole::Text);
+    title_label_ = lv_label_create(panel);
+    lv_label_bind_text(title_label_, view_model().greeting_subject(), nullptr);
+    auto* title_font = assets().load_standard_font(18, app::StandardFontWeight::Bold);
+    lv_obj_set_style_text_font(title_label_, title_font ? title_font : &lv_font_montserrat_20, 0);
+    reactive::bind_theme(title_label_, view_model().dark_mode_subject(), reactive::ThemeRole::Text);
 
-    auto* info = lv_label_create(group);
-    lv_label_set_text_fmt(info, "LVGL v%d.%d.%d", LVGL_VERSION_MAJOR, LVGL_VERSION_MINOR, LVGL_VERSION_PATCH);
-    auto* info_font = assets().load_standard_font(12, app::StandardFontWeight::Regular);
-    lv_obj_set_style_text_font(info, info_font ? info_font : &lv_font_montserrat_12, 0);
-    if (!lv_subject_get_int(view_model().info_visible_subject())) {
-        lv_obj_add_flag(info, LV_OBJ_FLAG_HIDDEN);
+    auto* subtitle = lv_label_create(panel);
+    lv_label_set_text(subtitle, "Type a prompt and press Enter to generate an image.");
+    lv_obj_set_width(subtitle, 296);
+    lv_label_set_long_mode(subtitle, LV_LABEL_LONG_WRAP);
+    auto* subtitle_font = assets().load_standard_font(11, app::StandardFontWeight::Regular);
+    lv_obj_set_style_text_font(subtitle,
+                               subtitle_font ? subtitle_font : &lv_font_montserrat_12,
+                               0);
+    reactive::bind_theme(subtitle, view_model().dark_mode_subject(), reactive::ThemeRole::Text);
+
+    prompt_card_ = lv_obj_create(panel);
+    lv_obj_remove_style_all(prompt_card_);
+    lv_obj_set_width(prompt_card_, LV_PCT(100));
+    lv_obj_set_style_radius(prompt_card_, 8, 0);
+    lv_obj_set_style_pad_all(prompt_card_, 8, 0);
+    lv_obj_set_style_pad_row(prompt_card_, 3, 0);
+    lv_obj_set_flex_flow(prompt_card_, LV_FLEX_FLOW_COLUMN);
+    lv_obj_clear_flag(prompt_card_, LV_OBJ_FLAG_SCROLLABLE);
+    reactive::bind_theme(prompt_card_, view_model().dark_mode_subject(), reactive::ThemeRole::Surface);
+    lv_obj_set_style_border_width(prompt_card_, 1, 0);
+    lv_obj_set_style_border_opa(prompt_card_, LV_OPA_COVER, 0);
+
+    prompt_label_ = lv_label_create(prompt_card_);
+    lv_label_set_text(prompt_label_, "Prompt");
+    auto* field_font = assets().load_standard_font(11, app::StandardFontWeight::Bold);
+    lv_obj_set_style_text_font(prompt_label_, field_font ? field_font : &lv_font_montserrat_12, 0);
+    reactive::bind_theme(prompt_label_, view_model().dark_mode_subject(), reactive::ThemeRole::Text);
+
+    prompt_textarea_ = lv_textarea_create(prompt_card_);
+    lv_obj_set_width(prompt_textarea_, LV_PCT(100));
+    lv_obj_set_height(prompt_textarea_, 42);
+    lv_textarea_set_one_line(prompt_textarea_, true);
+    lv_textarea_set_max_length(prompt_textarea_, kMaxPromptLength);
+    lv_textarea_set_placeholder_text(prompt_textarea_, "Describe the image to generate");
+    lv_textarea_set_text(prompt_textarea_, prompt_buffer_.c_str());
+    lv_textarea_set_cursor_pos(prompt_textarea_, LV_TEXTAREA_CURSOR_LAST);
+    reactive::bind_theme(prompt_textarea_, view_model().dark_mode_subject(), reactive::ThemeRole::Button);
+
+    preview_card_ = lv_obj_create(panel);
+    lv_obj_remove_style_all(preview_card_);
+    lv_obj_set_width(preview_card_, LV_PCT(100));
+    lv_obj_set_style_radius(preview_card_, 8, 0);
+    lv_obj_set_style_pad_all(preview_card_, 8, 0);
+    lv_obj_set_style_pad_row(preview_card_, 3, 0);
+    lv_obj_set_flex_flow(preview_card_, LV_FLEX_FLOW_COLUMN);
+    lv_obj_clear_flag(preview_card_, LV_OBJ_FLAG_SCROLLABLE);
+    reactive::bind_theme(preview_card_, view_model().dark_mode_subject(), reactive::ThemeRole::Surface);
+    lv_obj_set_style_border_width(preview_card_, 1, 0);
+    lv_obj_set_style_border_opa(preview_card_, LV_OPA_COVER, 0);
+
+    auto* preview_title = lv_label_create(preview_card_);
+    lv_label_set_text(preview_title, "Preview");
+    lv_obj_set_style_text_font(preview_title, field_font ? field_font : &lv_font_montserrat_12, 0);
+    reactive::bind_theme(preview_title, view_model().dark_mode_subject(), reactive::ThemeRole::Text);
+
+    preview_hint_label_ = lv_label_create(preview_card_);
+    lv_label_set_text(preview_hint_label_, "Generate an image to see it here.");
+    lv_obj_set_width(preview_hint_label_, LV_PCT(100));
+    lv_label_set_long_mode(preview_hint_label_, LV_LABEL_LONG_WRAP);
+    auto* hint_font = assets().load_standard_font(10, app::StandardFontWeight::Regular);
+    lv_obj_set_style_text_font(preview_hint_label_, hint_font ? hint_font : &lv_font_montserrat_10, 0);
+    reactive::bind_theme(preview_hint_label_, view_model().dark_mode_subject(), reactive::ThemeRole::Text);
+
+    preview_image_ = lv_image_create(preview_card_);
+    lv_obj_set_width(preview_image_, LV_PCT(100));
+    lv_obj_set_height(preview_image_, 96);
+    lv_image_set_inner_align(preview_image_, LV_IMAGE_ALIGN_CONTAIN);
+    lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
+
+    status_label_ = lv_label_create(panel);
+    lv_label_set_text(status_label_, "Ready");
+    lv_obj_set_width(status_label_, LV_PCT(100));
+    lv_label_set_long_mode(status_label_, LV_LABEL_LONG_WRAP);
+    auto* status_font = assets().load_standard_font(10, app::StandardFontWeight::Regular);
+    lv_obj_set_style_text_font(status_label_, status_font ? status_font : &lv_font_montserrat_10, 0);
+    reactive::bind_theme(status_label_, view_model().dark_mode_subject(), reactive::ThemeRole::Text);
+
+    refresh_prompt_display();
+    refresh_focus_display();
+    refresh_status_display();
+}
+
+bool AppleScreen::handle_key(uint32_t key, bool long_pressed) {
+    if (long_pressed) {
+        return false;
     }
-    lv_subject_add_observer_obj(view_model().info_visible_subject(), info_visible_observer, info, nullptr);
-    reactive::bind_theme(info, view_model().dark_mode_subject(), reactive::ThemeRole::Text);
 
-    auto* hints = lv_obj_create(group);
-    lv_obj_remove_style_all(hints);
-    lv_obj_set_size(hints, 220, 50);
-    lv_obj_set_flex_flow(hints, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(hints,
-                          LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER,
-                          LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_row(hints, 2, 0);
-    lv_obj_add_flag(hints, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
-    lv_obj_clear_flag(hints, LV_OBJ_FLAG_SCROLLABLE);
+    if (key == LV_KEY_ENTER || key == '\r' || key == '\n') {
+        return generate_image();
+    }
 
-    auto* key_icon_font = assets().load_font("kenney_input_keyboard_and_mouse.ttf", 34);
-    auto* extra_key_icon_font = assets().load_font("kenny_keyboard_extra.ttf", 34);
-    auto* hint_font = assets().load_standard_font(11, app::StandardFontWeight::Regular);
-    const auto add_hint = [&](const char* letter_icon,
-                              const char* letter_fallback,
-                              const char* action_icon,
-                              const char* action_fallback,
-                              const lv_font_t* action_font,
-                              const char* description_text) {
-        auto* item = lv_obj_create(hints);
-        lv_obj_remove_style_all(item);
-        lv_obj_set_size(item, 196, 24);
-        lv_obj_set_flex_flow(item, LV_FLEX_FLOW_ROW);
-        lv_obj_set_flex_align(item,
-                              LV_FLEX_ALIGN_START,
-                              LV_FLEX_ALIGN_CENTER,
-                              LV_FLEX_ALIGN_CENTER);
-        lv_obj_set_style_pad_column(item, 4, 0);
-        lv_obj_add_flag(item, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
-        lv_obj_clear_flag(item, LV_OBJ_FLAG_SCROLLABLE);
+    if (key == LV_KEY_BACKSPACE || key == LV_KEY_DEL || key == 8u) {
+        if (!prompt_buffer_.empty()) {
+            prompt_buffer_.pop_back();
+            refresh_prompt_display();
+            action_status_.clear();
+            refresh_status_display();
+        }
+        return true;
+    }
 
-        const auto add_key = [&](const char* icon,
-                                 const char* fallback,
-                                 const lv_font_t* icon_font) {
-            auto* key = lv_obj_create(item);
-            lv_obj_remove_style_all(key);
-            lv_obj_set_size(key, 26, 24);
-            lv_obj_add_flag(key, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
-            lv_obj_clear_flag(key, LV_OBJ_FLAG_SCROLLABLE);
+    if (!is_printable_key(key)) {
+        return false;
+    }
 
-            auto* icon_label = lv_label_create(key);
-            lv_label_set_text(icon_label, icon_font ? icon : fallback);
-            lv_obj_set_style_text_font(icon_label,
-                                       icon_font ? icon_font : &lv_font_montserrat_12,
-                                       0);
-            lv_obj_align(icon_label, LV_ALIGN_CENTER, 0, icon_font ? -3 : 0);
-            reactive::bind_theme(icon_label,
-                                 view_model().dark_mode_subject(),
-                                 reactive::ThemeRole::Text);
-        };
+    if (prompt_buffer_.size() < kMaxPromptLength) {
+        prompt_buffer_.push_back(static_cast<char>(key));
+        refresh_prompt_display();
+        action_status_.clear();
+        refresh_status_display();
+    }
+    return true;
+}
 
-        const auto add_text = [&](const char* text) {
-            auto* label = lv_label_create(item);
-            lv_label_set_text(label, text);
-            lv_obj_set_style_text_font(label,
-                                       hint_font ? hint_font : &lv_font_montserrat_12,
-                                       0);
-            reactive::bind_theme(label,
-                                 view_model().dark_mode_subject(),
-                                 reactive::ThemeRole::Text);
-        };
+void AppleScreen::refresh_prompt_display() {
+    if (!prompt_textarea_) {
+        return;
+    }
 
-        add_key(kIconKbFn, "FN", key_icon_font);
-        add_text("+");
-        add_key(letter_icon, letter_fallback, key_icon_font);
-        add_text("=");
-        add_key(action_icon, action_fallback, action_font);
-        add_text(description_text);
-    };
+    lv_textarea_set_text(prompt_textarea_, prompt_buffer_.c_str());
+    lv_textarea_set_cursor_pos(prompt_textarea_, LV_TEXTAREA_CURSOR_LAST);
+}
 
-    add_hint(kIconKbH, "H", kIconKbHelp, "?", extra_key_icon_font, "Help");
-    add_hint(kIconKbJ,
-             "J",
-             kIconKbPrintScreen,
-             "PRSC",
-             key_icon_font,
-             "Screenshot");
+void AppleScreen::refresh_status_display() {
+    if (!status_label_) {
+        return;
+    }
+
+    std::string status = action_status_.empty() ? "Ready" : action_status_;
+    status.append(" • Model: ");
+    status.append(settings_.gemini_model);
+    status.append(" • Personality: ");
+    status.append(settings_.default_personality);
+    lv_label_set_text(status_label_, status.c_str());
+}
+
+void AppleScreen::refresh_focus_display() {
+    if (!prompt_textarea_) {
+        return;
+    }
+
+    lv_obj_add_state(prompt_textarea_, LV_STATE_FOCUSED);
+}
+
+bool AppleScreen::generate_image() {
+    if (settings_.gemini_api_key.empty()) {
+        action_status_ = "Set the API key in settings first";
+        refresh_status_display();
+        return false;
+    }
+
+    const auto* preset = app::find_prompt_preset(settings_.default_personality);
+    const auto& selected_preset = preset ? *preset : app::default_prompt_preset();
+    const std::string prompt = app::build_prompt(selected_preset, prompt_buffer_);
+
+    action_status_ = "Generating image...";
+    refresh_status_display();
+
+    const auto output_path = paths_.build_output_path("gemini-image", ".png");
+    const auto result = app::generate_gemini_image_request(settings_.gemini_api_key,
+                                                           settings_.gemini_model,
+                                                           prompt,
+                                                           output_path,
+                                                           paths_.temp_dir());
+    if (!result.ok) {
+        action_status_ = result.message.empty() ? "Gemini image request failed" : result.message;
+        refresh_status_display();
+        LOG_WARN("Gemini image generation failed for {} / {}: {}",
+                 settings_.gemini_model,
+                 settings_.default_personality,
+                 result.message);
+        return false;
+    }
+
+    set_preview_image(result.image_path);
+    action_status_ = "Saved image";
+    refresh_status_display();
+    LOG_INFO("Gemini image saved to {} using {} / {}",
+             result.image_path.string(),
+             settings_.gemini_model,
+             settings_.default_personality);
+    return true;
+}
+
+void AppleScreen::set_preview_image(const std::filesystem::path& image_path) {
+    preview_path_ = image_path.string();
+    preview_lvgl_path_ = to_lvgl_path(image_path);
+    if (preview_image_) {
+        lv_image_set_src(preview_image_, preview_lvgl_path_.c_str());
+        lv_obj_clear_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (preview_hint_label_) {
+        lv_obj_add_flag(preview_hint_label_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (preview_card_) {
+        lv_obj_scroll_to_view_recursive(preview_card_, LV_ANIM_OFF);
+    }
+}
+
+std::string AppleScreen::to_lvgl_path(const std::filesystem::path& path) {
+    return std::string("A:") + path.generic_string();
+}
+
+bool AppleScreen::is_printable_key(uint32_t key) {
+    return key >= 32 && key <= 126;
 }
 
 } // namespace screen

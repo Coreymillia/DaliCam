@@ -28,7 +28,6 @@ namespace screen {
 namespace {
 
 constexpr std::size_t kMaxApiKeyLength = 128;
-constexpr std::size_t kMaxPromptLength = 512;
 constexpr std::string_view kModelDropdownOptions =
     "Nano Banana 2.1\n"
     "3.1 Flash Lite\n"
@@ -60,7 +59,6 @@ ButterScreen::ButterScreen(viewmodel::BaseViewModel& view_model,
       settings_(settings),
       paths_(paths),
       api_key_buffer_(settings.gemini_api_key),
-      prompt_buffer_(),
       selected_model_index_(model_index_for(settings.gemini_model)),
       selected_personality_index_(personality_index_for(settings.default_personality)) {
     settings_.gemini_model = std::string(selected_model());
@@ -161,17 +159,6 @@ void ButterScreen::build_content(lv_obj_t* content) {
     lv_obj_add_event_cb(model_dropdown_, model_dropdown_changed_cb, LV_EVENT_VALUE_CHANGED, this);
     reactive::bind_theme(model_dropdown_, view_model().dark_mode_subject(), reactive::ThemeRole::Button);
 
-    make_card("Prompt", prompt_card_);
-    prompt_textarea_ = lv_textarea_create(prompt_card_);
-    lv_obj_set_width(prompt_textarea_, LV_PCT(100));
-    lv_obj_set_height(prompt_textarea_, 28);
-    lv_textarea_set_one_line(prompt_textarea_, true);
-    lv_textarea_set_max_length(prompt_textarea_, kMaxPromptLength);
-    lv_textarea_set_placeholder_text(prompt_textarea_, "Optional text prompt; blank uses Dali default");
-    lv_textarea_set_text(prompt_textarea_, prompt_buffer_.c_str());
-    lv_textarea_set_cursor_pos(prompt_textarea_, LV_TEXTAREA_CURSOR_LAST);
-    reactive::bind_theme(prompt_textarea_, view_model().dark_mode_subject(), reactive::ThemeRole::Button);
-
     make_card("Preview", preview_card_);
     preview_hint_label_ = lv_label_create(preview_card_);
     lv_label_set_text(preview_hint_label_, "Generate an image to show the latest preview here.");
@@ -190,7 +177,6 @@ void ButterScreen::build_content(lv_obj_t* content) {
     refresh_api_key_display();
     refresh_personality_display();
     refresh_model_display();
-    refresh_prompt_display();
     refresh_focus_display();
     refresh_status_display();
 }
@@ -200,7 +186,7 @@ bool ButterScreen::handle_key(uint32_t key, bool long_pressed) {
         if (long_pressed) {
             return false;
         }
-        return generate_image(true);
+        return generate_image();
     }
 
     if (long_pressed) {
@@ -242,9 +228,6 @@ bool ButterScreen::handle_key(uint32_t key, bool long_pressed) {
     }
 
     if (key == LV_KEY_ENTER || key == '\r' || key == '\n') {
-        if (focus_ == FocusField::Prompt) {
-            return generate_image(false);
-        }
         return save_settings();
     }
 
@@ -257,13 +240,6 @@ bool ButterScreen::handle_key(uint32_t key, bool long_pressed) {
                     dirty_ = true;
                     handled = true;
                     refresh_api_key_display();
-                }
-                break;
-            case FocusField::Prompt:
-                if (!prompt_buffer_.empty()) {
-                    prompt_buffer_.pop_back();
-                    handled = true;
-                    refresh_prompt_display();
                 }
                 break;
             case FocusField::Personality:
@@ -289,14 +265,6 @@ bool ButterScreen::handle_key(uint32_t key, bool long_pressed) {
                 dirty_ = true;
                 action_status_.clear();
                 refresh_api_key_display();
-                refresh_status_display();
-            }
-            return true;
-        case FocusField::Prompt:
-            if (prompt_buffer_.size() < kMaxPromptLength) {
-                prompt_buffer_.push_back(static_cast<char>(key));
-                action_status_.clear();
-                refresh_prompt_display();
                 refresh_status_display();
             }
             return true;
@@ -333,15 +301,6 @@ void ButterScreen::refresh_model_display() {
     lv_dropdown_set_selected(model_dropdown_, static_cast<uint16_t>(selected_model_index_));
 }
 
-void ButterScreen::refresh_prompt_display() {
-    if (!prompt_textarea_) {
-        return;
-    }
-
-    lv_textarea_set_text(prompt_textarea_, prompt_buffer_.c_str());
-    lv_textarea_set_cursor_pos(prompt_textarea_, LV_TEXTAREA_CURSOR_LAST);
-}
-
 void ButterScreen::refresh_status_display() {
     if (!status_label_) {
         return;
@@ -358,9 +317,6 @@ void ButterScreen::refresh_status_display() {
             break;
         case FocusField::Model:
             status.append("Model");
-            break;
-        case FocusField::Prompt:
-            status.append("Prompt");
             break;
     }
     lv_label_set_text(status_label_, status.c_str());
@@ -380,7 +336,6 @@ void ButterScreen::refresh_focus_display() {
     set_card_style(api_key_card_, focus_ == FocusField::ApiKey);
     set_card_style(personality_card_, focus_ == FocusField::Personality);
     set_card_style(model_card_, focus_ == FocusField::Model);
-    set_card_style(prompt_card_, focus_ == FocusField::Prompt);
     set_card_style(preview_card_, false);
 
     auto* focus_widget = static_cast<lv_obj_t*>(nullptr);
@@ -394,16 +349,12 @@ void ButterScreen::refresh_focus_display() {
         case FocusField::Model:
             focus_widget = model_dropdown_;
             break;
-        case FocusField::Prompt:
-            focus_widget = prompt_textarea_;
-            break;
     }
 
-    const std::array<lv_obj_t*, 4> widgets = {
+    const std::array<lv_obj_t*, 3> widgets = {
         api_key_textarea_,
         personality_dropdown_,
         model_dropdown_,
-        prompt_textarea_,
     };
     for (auto* widget : widgets) {
         if (widget) {
@@ -425,16 +376,13 @@ void ButterScreen::set_focus(FocusField field) {
 void ButterScreen::focus_previous() {
     switch (focus_) {
         case FocusField::ApiKey:
-            set_focus(FocusField::Prompt);
+            set_focus(FocusField::Model);
             break;
         case FocusField::Personality:
             set_focus(FocusField::ApiKey);
             break;
         case FocusField::Model:
             set_focus(FocusField::Personality);
-            break;
-        case FocusField::Prompt:
-            set_focus(FocusField::Model);
             break;
     }
 }
@@ -448,9 +396,6 @@ void ButterScreen::focus_next() {
             set_focus(FocusField::Model);
             break;
         case FocusField::Model:
-            set_focus(FocusField::Prompt);
-            break;
-        case FocusField::Prompt:
             set_focus(FocusField::ApiKey);
             break;
     }
@@ -555,7 +500,7 @@ bool ButterScreen::save_settings() {
     return true;
 }
 
-bool ButterScreen::generate_image(bool use_test_prompt) {
+bool ButterScreen::generate_image() {
     if (api_key_buffer_.empty()) {
         action_status_ = "Enter API key first";
         refresh_status_display();
@@ -566,7 +511,7 @@ bool ButterScreen::generate_image(bool use_test_prompt) {
         return false;
     }
 
-    const std::string prompt = app::build_prompt(selected_prompt_preset(), use_test_prompt ? std::string_view{} : std::string_view(prompt_buffer_));
+    const std::string prompt = app::build_prompt(selected_prompt_preset(), std::string_view{});
     action_status_ = "Generating image...";
     refresh_status_display();
 
