@@ -52,6 +52,10 @@ void BaseScreen::init() {
     build_content(content_);
 }
 
+bool BaseScreen::handle_key(uint32_t, bool) {
+    return false;
+}
+
 lv_obj_t* BaseScreen::root() const {
     return root_;
 }

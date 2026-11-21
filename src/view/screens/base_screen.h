@@ -11,6 +11,8 @@
 #include "titlebar.h"
 #include "lvgl.h"
 
+#include <cstdint>
+
 #include <memory>
 
 namespace app {
@@ -29,6 +31,7 @@ public:
 
     void init();
     lv_obj_t* root() const;
+    virtual bool handle_key(uint32_t key, bool long_pressed);
 
 protected:
     virtual void build_content(lv_obj_t* content) = 0;

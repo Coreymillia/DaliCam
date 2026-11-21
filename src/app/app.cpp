@@ -11,8 +11,12 @@
 #include "help_popup.h"
 #include "logger.h"
 #include "linux_input.h"
+#include "paths.h"
+#include "prompt_presets.h"
 #include "screenshot_service.h"
 #include "screen_manager.h"
+#include "settings.h"
+#include "storage.h"
 #include "base_viewmodel.h"
 #include "theme.h"
 #include "toast.h"
@@ -110,8 +114,11 @@ void persist_dark_mode_observer(lv_observer_t* observer, lv_subject_t* subject) 
 
 class ShortcutController {
 public:
-    ShortcutController(viewmodel::BaseViewModel& view_model, AssetManager& assets)
+    ShortcutController(viewmodel::BaseViewModel& view_model,
+                      ScreenManager& screen_manager,
+                      AssetManager& assets)
         : view_model_(view_model),
+          screen_manager_(screen_manager),
           toast_(std::make_unique<view::widgets::Toast>(lv_layer_top(), view_model, assets)),
           help_popup_(std::make_unique<view::widgets::HelpPopup>(lv_layer_top(), view_model, assets)) {
         toast_->build();
@@ -166,6 +173,11 @@ private:
             if (key == LV_KEY_ESC && !long_pressed) {
                 help_popup_->hide();
             }
+            return true;
+        }
+
+        if (view_model_.current_page() == model::AppPage::Butter &&
+            screen_manager_.handle_key(key, long_pressed)) {
             return true;
         }
 
@@ -228,6 +240,7 @@ private:
     }
 
     viewmodel::BaseViewModel& view_model_;
+    ScreenManager& screen_manager_;
     std::unique_ptr<view::widgets::Toast> toast_;
     std::unique_ptr<view::widgets::HelpPopup> help_popup_;
     uint32_t exit_key_pressed_{0};
@@ -270,7 +283,7 @@ lv_display_t* init_device_display() {
 
 int Application::run() {
     logger::Logger::init();
-    logger::Logger::set_tag("template");
+    logger::Logger::set_tag("dalicam");
 
     lv_init();
 
@@ -278,6 +291,49 @@ int Application::run() {
     for (const auto& root : assets.roots()) {
         LOG_INFO("asset root: {}", root.string());
     }
+
+    Paths runtime_paths;
+    Storage runtime_storage(runtime_paths);
+    std::string storage_error;
+    if (runtime_storage.prepare(storage_error)) {
+        LOG_INFO("runtime storage ready: {}", runtime_paths.root().string());
+    } else {
+        LOG_WARN("runtime storage not ready at {}: {}", runtime_paths.root().string(), storage_error);
+    }
+
+    Settings runtime_settings;
+    std::string settings_error;
+    if (runtime_settings.load(runtime_paths.settings_file(), settings_error)) {
+        LOG_INFO("loaded settings: model={}, preset={}, text_only={}, save_inputs={}, save_outputs={}",
+                 runtime_settings.gemini_model,
+                 runtime_settings.default_personality,
+                 runtime_settings.allow_text_only_generation ? "yes" : "no",
+                 runtime_settings.save_source_images ? "yes" : "no",
+                 runtime_settings.save_generated_images ? "yes" : "no");
+    } else {
+        std::error_code settings_exists_error;
+        const bool settings_exists = std::filesystem::exists(runtime_paths.settings_file(),
+                                                            settings_exists_error);
+        if (!settings_exists && !settings_exists_error) {
+            std::string save_error;
+            if (runtime_settings.save(runtime_paths.settings_file(), save_error)) {
+                LOG_INFO("created default settings: {}", runtime_paths.settings_file().string());
+            } else {
+                LOG_WARN("failed to create default settings {}: {}",
+                         runtime_paths.settings_file().string(),
+                         save_error);
+            }
+        } else {
+            LOG_WARN("failed to load settings {}: {}",
+                     runtime_paths.settings_file().string(),
+                     settings_error);
+        }
+    }
+
+    const auto& default_preset = default_prompt_preset();
+    LOG_INFO("prompt presets ready: {} available, default={}",
+             prompt_presets().size(),
+             default_preset.label);
 
     viewmodel::BaseViewModel view_model;
     const std::string user_config_path = writable_config_path();
@@ -292,13 +348,13 @@ int Application::run() {
     ApplicationConfig config;
     std::string config_error;
     if (load_application_config(loaded_config_path, config, config_error)) {
-        view_model.set_dark_mode(config.dark_mode);
         LOG_INFO("loaded config: {} (dark_mode={})",
                  loaded_config_path,
                  config.dark_mode ? "yes" : "no");
     } else {
         LOG_WARN("failed to load config {}: {}; using defaults", loaded_config_path, config_error);
     }
+    view_model.set_dark_mode(true);
 
 #if USE_DESKTOP
     DesktopSimulatorFrame simulator_frame(assets);
@@ -320,9 +376,9 @@ int Application::run() {
     simulator_frame.bind_dark_mode(view_model.dark_mode_subject());
 #endif
 
-    ScreenManager screen_manager(view_model, assets);
+    ScreenManager screen_manager(view_model, assets, runtime_settings, runtime_paths);
     screen_manager.start();
-    ShortcutController shortcuts(view_model, assets);
+    ShortcutController shortcuts(view_model, screen_manager, assets);
 
     DarkModePersistence dark_mode_persistence{user_config_path, view_model.is_dark_mode()};
     auto* dark_mode_observer = lv_subject_add_observer(view_model.dark_mode_subject(),

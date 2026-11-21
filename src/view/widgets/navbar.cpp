@@ -29,8 +29,8 @@ struct ShortcutSpec {
 
 constexpr std::array<ShortcutSpec, 3> kButterShortcuts = {{
     {"ESC", "Back"},
-    {"Z/Left", "Less"},
-    {"C/Right", "More"},
+    {"ENTER", "Save"},
+    {"BACKSPACE", "Delete"},
 }};
 
 } // namespace
@@ -83,15 +83,15 @@ void NavBar::create_shortcut_hints() {
     lv_obj_remove_style_all(shortcut_bar_);
     lv_obj_set_size(shortcut_bar_, LV_PCT(100), LV_PCT(100));
     lv_obj_set_flex_flow(shortcut_bar_, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(shortcut_bar_, LV_FLEX_ALIGN_SPACE_BETWEEN, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_hor(shortcut_bar_, 10, 0);
+    lv_obj_set_style_pad_hor(shortcut_bar_, 8, 0);
+    lv_obj_set_flex_align(shortcut_bar_, LV_FLEX_ALIGN_SPACE_EVENLY, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
     lv_obj_clear_flag(shortcut_bar_, LV_OBJ_FLAG_SCROLLABLE);
 
-    const lv_font_t* key_font = assets_.load_standard_font(14);
+    const lv_font_t* key_font = assets_.load_standard_font(13);
     if (!key_font) {
         key_font = &lv_font_montserrat_14;
     }
-    const lv_font_t* text_font = assets_.load_standard_font(14, app::StandardFontWeight::Regular);
+    const lv_font_t* text_font = assets_.load_standard_font(11, app::StandardFontWeight::Regular);
     if (!text_font) {
         text_font = &lv_font_montserrat_14;
     }

@@ -30,8 +30,11 @@ void current_page_observer(lv_observer_t* observer, lv_subject_t* subject) {
 
 } // namespace
 
-ScreenManager::ScreenManager(viewmodel::BaseViewModel& view_model, AssetManager& assets)
-    : view_model_(view_model), assets_(assets) {}
+ScreenManager::ScreenManager(viewmodel::BaseViewModel& view_model,
+                             AssetManager& assets,
+                             Settings& settings,
+                             Paths& paths)
+    : view_model_(view_model), assets_(assets), settings_(settings), paths_(paths) {}
 
 ScreenManager::~ScreenManager() {
     lv_async_call_cancel(flush_requested_page_async, this);
@@ -60,7 +63,7 @@ void ScreenManager::show_apple_screen() {
 }
 
 void ScreenManager::show_butter_screen() {
-    load_screen(std::make_unique<screen::ButterScreen>(view_model_, assets_));
+    load_screen(std::make_unique<screen::ButterScreen>(view_model_, assets_, settings_, paths_));
     loaded_page_ = model::AppPage::Butter;
     has_loaded_page_ = true;
 }
@@ -88,6 +91,10 @@ void ScreenManager::flush_requested_page() {
     }
 
     show_apple_screen();
+}
+
+bool ScreenManager::handle_key(uint32_t key, bool long_pressed) {
+    return current_screen_ ? current_screen_->handle_key(key, long_pressed) : false;
 }
 
 lv_obj_t* ScreenManager::current_screen() const {

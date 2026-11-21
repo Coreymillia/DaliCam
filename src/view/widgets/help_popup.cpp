@@ -31,8 +31,8 @@ constexpr std::array<HelpRow, 5> kAppleRows = {{
 
 constexpr std::array<HelpRow, 3> kButterRows = {{
     {"ESC", "Back to home"},
-    {"Z / LEFT", "Decrease"},
-    {"C / RIGHT", "Increase"},
+    {"ENTER", "Save settings"},
+    {"BACKSPACE", "Delete char"},
 }};
 
 } // namespace
@@ -157,7 +157,7 @@ bool HelpPopup::visible() const {
 
 void HelpPopup::update_rows(model::AppPage page) {
     const bool butter = page == model::AppPage::Butter;
-    lv_label_set_text(page_badge_, butter ? "COUNTER" : "HOME");
+    lv_label_set_text(page_badge_, butter ? "SETTINGS" : "HOME");
     for (std::size_t i = 0; i < rows_.size(); ++i) {
         const bool row_visible = butter ? i < kButterRows.size() : i < kAppleRows.size();
         if (!row_visible) {

@@ -4,12 +4,17 @@ Sprint 0 foundation for a CardputerZero app that will eventually handle Gemini i
 
 ## Current status
 
-This repository currently proves the **build / package / deploy / launch** path with a minimal hello screen.
+This repository currently proves the **build / package / deploy / launch** path with a minimal hello screen, and Sprint 1 now adds the first runtime plumbing.
 
 - App name: `DaliCam`
 - Package name: `dalicam`
 - Current UI: `HELLO`
 - Config file: `config/dalicam.conf`
+- Runtime app data: stored under the user profile on the SD-backed filesystem in `~/.local/share/DaliCam` by default
+- Runtime settings file: `~/.local/share/DaliCam/settings.ini`
+- Runtime folders: `input/`, `generated/`, `temp/`, `logs/`
+- Settings page: Gemini API key + image model picker
+- Allowed image models: `gemini-nano-banana-2.1`, `gemini-3.1-flash-lite-image`, `gemini-3-pro-image`
 
 ## Why Sprint 0 exists
 
@@ -39,11 +44,11 @@ This is meant to install only the app package over SSH, not replace the Cardpute
 
 ## Next planned work
 
-1. Verify the hello app launches on the device
-2. Add shared paths/settings/storage modules
+1. Wire the camera capture flow
+2. Add confirm Y/N handling after capture
 3. Port Gemini image generation from WhisplayGroqHat
-4. Add camera capture and confirm Y/N flow
-5. Add the simplified web UI
+4. Add the simplified web UI
+5. Refine the saved settings and prompt editing flow
 
 ## Notes
 
