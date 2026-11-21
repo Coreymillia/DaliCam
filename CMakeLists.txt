@@ -473,7 +473,8 @@ target_link_libraries(${PROJECT_NAME}_reactive
 
 file(GLOB_RECURSE UI_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/view/*.c"
-    "${CMAKE_CURRENT_SOURCE_DIR}/src/view/*.cpp"  
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/view/*.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/app/gemini_client.cpp"
 )
 
 add_library(${PROJECT_NAME}_view
@@ -488,6 +489,7 @@ target_include_directories(${PROJECT_NAME}_view
         ${CMAKE_CURRENT_SOURCE_DIR}/src/view/screens
         ${CMAKE_CURRENT_SOURCE_DIR}/src/view/widgets
         ${CMAKE_CURRENT_SOURCE_DIR}/src/app
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/logger
         ${CMAKE_CURRENT_SOURCE_DIR}/src/reactive
         ${CMAKE_CURRENT_SOURCE_DIR}/src/viewmodel
         ${CMAKE_CURRENT_SOURCE_DIR}/src/model
@@ -497,6 +499,7 @@ target_include_directories(${PROJECT_NAME}_view
 target_link_libraries(${PROJECT_NAME}_view
     PUBLIC
         lvgl
+        logger
         ${PROJECT_NAME}_reactive
         ${PROJECT_NAME}_platform
 )
@@ -541,6 +544,9 @@ target_link_libraries(${PROJECT_NAME}_viewmodel
 file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/app/*.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/app/*.cpp"
+)
+list(REMOVE_ITEM APP_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/app/gemini_client.cpp"
 )
 
 file(GLOB_RECURSE LOGGER_SOURCES CONFIGURE_DEPENDS
@@ -623,10 +629,10 @@ add_executable(${PROJECT_NAME}
 target_link_libraries(${PROJECT_NAME}
     PRIVATE
         ${PROJECT_NAME}_platform
-        ${PROJECT_NAME}_core
-        ${PROJECT_NAME}_model
         ${PROJECT_NAME}_view
         ${PROJECT_NAME}_viewmodel
+        ${PROJECT_NAME}_core
+        ${PROJECT_NAME}_model
 )
 
 # Package deb

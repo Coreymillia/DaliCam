@@ -6,6 +6,8 @@
 
 #include "settings.h"
 
+#include "prompt_presets.h"
+
 #include <algorithm>
 #include <cctype>
 #include <filesystem>
@@ -43,6 +45,29 @@ std::string unquote(std::string value) {
         }
     }
     return value;
+}
+
+std::string normalize_personality(std::string value) {
+    value = lowercase(trim(std::move(value)));
+    for (char& character : value) {
+        if (character == ' ' || character == '_') {
+            character = '-';
+        }
+    }
+
+    if (value.find("dali") != std::string::npos) {
+        return std::string(default_prompt_preset().id);
+    }
+    if (value.find("vector") != std::string::npos) {
+        const auto* preset = find_prompt_preset("vector-sheet");
+        if (preset) {
+            return std::string(preset->id);
+        }
+    }
+    if (const auto* preset = find_prompt_preset(value); preset) {
+        return std::string(preset->id);
+    }
+    return std::string(default_prompt_preset().id);
 }
 
 bool parse_bool(const std::string& value, bool& result) {
@@ -107,7 +132,7 @@ bool Settings::load(const std::filesystem::path& path, std::string& error) {
         }
         else if (section == "generation") {
             if (key == "default_personality") {
-                default_personality = lowercase(value);
+                default_personality = normalize_personality(value);
             }
             else if (key == "allow_text_only_generation") {
                 if (!parse_bool(value, allow_text_only_generation)) {
@@ -138,6 +163,8 @@ bool Settings::load(const std::filesystem::path& path, std::string& error) {
     if (!is_supported_gemini_model(gemini_model)) {
         gemini_model = std::string(kDefaultGeminiModel);
     }
+
+    default_personality = normalize_personality(default_personality);
 
     return true;
 }
@@ -170,7 +197,7 @@ bool Settings::save(const std::filesystem::path& path, std::string& error) const
     output << "model=" << model_to_save << "\n\n";
 
     output << "[generation]\n";
-    output << "default_personality=" << default_personality << '\n';
+    output << "default_personality=" << normalize_personality(default_personality) << '\n';
     output << "allow_text_only_generation=" << (allow_text_only_generation ? "yes" : "no")
            << "\n\n";
 

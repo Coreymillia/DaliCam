@@ -62,8 +62,15 @@ log "Deploy: scp ${latest_package} ${remote_target}"
 "${scp_cmd[@]}" "${latest_package}" "${remote_target}"
 
 if [[ "${REMOTE_INSTALL}" == "1" ]]; then
-  log "Install: ssh ${REMOTE_USER}@${REMOTE_HOST} sudo -n dpkg -i ${remote_package_path}"
-  "${ssh_cmd[@]}" "${REMOTE_USER}@${REMOTE_HOST}" "sudo -n dpkg -i '${remote_package_path}'"
+  if [[ -n "${SSH_PASSWORD}" ]]; then
+    remote_password_quoted=$(printf '%q' "${SSH_PASSWORD}")
+    log "Install: ssh ${REMOTE_USER}@${REMOTE_HOST} (sudo -S) dpkg -i ${remote_package_path}"
+    "${ssh_cmd[@]}" "${REMOTE_USER}@${REMOTE_HOST}" \
+      "printf '%s\\n' ${remote_password_quoted} | sudo -S -p '' dpkg -i '${remote_package_path}'"
+  else
+    log "Install: ssh ${REMOTE_USER}@${REMOTE_HOST} sudo -n dpkg -i ${remote_package_path}"
+    "${ssh_cmd[@]}" "${REMOTE_USER}@${REMOTE_HOST}" "sudo -n dpkg -i '${remote_package_path}'"
+  fi
 fi
 
 if [[ "${REMOTE_CLEANUP}" == "1" ]]; then

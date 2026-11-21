@@ -1,0 +1,34 @@
+/*
+ * SPDX-FileCopyrightText: 2026 M5Stack Technology CO LTD
+ *
+ * SPDX-License-Identifier: MIT
+ */
+
+#pragma once
+
+#include <filesystem>
+#include <string>
+#include <string_view>
+
+namespace app {
+
+struct GeminiImageResult {
+    bool ok{false};
+    std::string message;
+    std::filesystem::path response_path;
+    std::filesystem::path error_path;
+    std::filesystem::path image_path;
+};
+
+GeminiImageResult generate_gemini_image_request(std::string_view api_key,
+                                                std::string_view model,
+                                                std::string_view prompt,
+                                                const std::filesystem::path& output_path,
+                                                const std::filesystem::path& temp_dir);
+
+GeminiImageResult test_gemini_image_request(std::string_view api_key,
+                                           std::string_view model,
+                                           const std::filesystem::path& output_path,
+                                           const std::filesystem::path& temp_dir);
+
+} // namespace app

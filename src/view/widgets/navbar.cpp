@@ -27,10 +27,11 @@ struct ShortcutSpec {
     const char* action;
 };
 
-constexpr std::array<ShortcutSpec, 3> kButterShortcuts = {{
+constexpr std::array<ShortcutSpec, 4> kButterShortcuts = {{
     {"ESC", "Back"},
-    {"ENTER", "Save"},
+    {"ENTER", "Save/Gen"},
     {"BACKSPACE", "Delete"},
+    {"PRTSCR", "Test"},
 }};
 
 } // namespace

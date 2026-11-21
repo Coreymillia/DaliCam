@@ -43,7 +43,7 @@ private:
     viewmodel::BaseViewModel& view_model_;
     app::AssetManager& assets_;
     std::array<std::unique_ptr<IconButton>, 5> icon_buttons_;
-    std::array<lv_obj_t*, 3> shortcut_key_labels_{};
+    std::array<lv_obj_t*, 4> shortcut_key_labels_{};
     lv_font_t* icon_font_{nullptr};
     lv_obj_t* shortcut_bar_{nullptr};
     lv_observer_t* page_observer_{nullptr};

@@ -134,6 +134,11 @@ public:
 
 private:
     bool handle_key(uint32_t key, bool long_pressed) {
+        if (view_model_.current_page() == model::AppPage::Butter &&
+            key == platform::kKeyPrintScreen) {
+            return screen_manager_.handle_key(key, long_pressed);
+        }
+
         if (key == platform::kKeyPrintScreen) {
             if (!long_pressed) {
                 const auto result = platform::screenshot::capture_active_screen();

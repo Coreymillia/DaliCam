@@ -8,13 +8,13 @@ This repository currently proves the **build / package / deploy / launch** path 
 
 - App name: `DaliCam`
 - Package name: `dalicam`
-- Current UI: `HELLO`
+- Current UI: settings-focused screen with Gemini API key, personality selector, image model selector, and a prototype prompt/generate flow
 - Config file: `config/dalicam.conf`
 - Runtime app data: stored under the user profile on the SD-backed filesystem in `~/.local/share/DaliCam` by default
 - Runtime settings file: `~/.local/share/DaliCam/settings.ini`
 - Runtime folders: `input/`, `generated/`, `temp/`, `logs/`
-- Settings page: Gemini API key + image model picker
 - Allowed image models: `gemini-nano-banana-2.1`, `gemini-3.1-flash-lite-image`, `gemini-3-pro-image`
+- Personality presets: Dali first, with room for Vector and custom presets later
 
 ## Why Sprint 0 exists
 
@@ -44,15 +44,17 @@ This is meant to install only the app package over SSH, not replace the Cardpute
 
 ## Next planned work
 
-1. Wire the camera capture flow
-2. Add confirm Y/N handling after capture
-3. Port Gemini image generation from WhisplayGroqHat
-4. Add the simplified web UI
-5. Refine the saved settings and prompt editing flow
+1. Move the prompt box to the main screen
+2. Keep settings focused on API key, model, and personality only
+3. Wire the camera capture flow
+4. Add confirm Y/N handling after capture
+5. Add the simplified web UI
+6. Refine the saved settings and prompt editing flow
 
 ## Notes
 
 - The current app is intentionally simple.
-- The Dali and Vector prompt work will come later.
+- The prompt box is currently part of the prototype settings/generation flow and will move to the main screen next.
+- The Dali prompt is the current hardcoded personality target; Vector and custom personalities will follow.
 - We are using this repo as the base shell for the final app.
 - The release package is designed to install over SSH with `sudo -n dpkg -i` without replacing the CardputerZero OS.

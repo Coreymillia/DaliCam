@@ -24,7 +24,7 @@ public:
 
     std::string gemini_api_key;
     std::string gemini_model = std::string(kDefaultGeminiModel);
-    std::string default_personality = "dali";
+    std::string default_personality = "dali-dream";
     bool allow_text_only_generation = true;
     bool save_source_images = true;
     bool save_generated_images = true;

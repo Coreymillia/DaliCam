@@ -43,6 +43,8 @@ struct EvdevKeypad {
     int fd{-1};
     lv_indev_state_t state{LV_INDEV_STATE_RELEASED};
     uint32_t key{0};
+    uint32_t active_key{0};
+    bool shift_active{false};
     bool router_event_pending{false};
     uint32_t router_key{0};
     bool router_pressed{false};
@@ -183,7 +185,17 @@ void key_event_cb(lv_event_t* event) {
 }
 
 #if !USE_DESKTOP
-uint32_t map_evdev_key(uint16_t code) {
+bool has_key_in_range(const unsigned long* key_bits, int first, int last) {
+    const auto bits_per_word = static_cast<int>(sizeof(unsigned long) * 8);
+    for (int code = first; code <= last; ++code) {
+        if ((key_bits[code / bits_per_word] & (1UL << (code % bits_per_word))) != 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+uint32_t map_evdev_key(uint16_t code, bool shift_active) {
     switch (code) {
         case KEY_ESC:
             return LV_KEY_ESC;
@@ -191,10 +203,25 @@ uint32_t map_evdev_key(uint16_t code) {
             return LV_KEY_LEFT;
         case KEY_RIGHT:
             return LV_KEY_RIGHT;
-        case KEY_Z:
-            return 'z';
-        case KEY_C:
-            return 'c';
+        case KEY_UP:
+            return LV_KEY_UP;
+        case KEY_DOWN:
+            return LV_KEY_DOWN;
+        case KEY_BACKSPACE:
+            return LV_KEY_BACKSPACE;
+        case KEY_DELETE:
+            return LV_KEY_DEL;
+        case KEY_ENTER:
+        case KEY_KPENTER:
+            return LV_KEY_ENTER;
+        case KEY_SPACE:
+            return ' ';
+        case KEY_1:
+            return '1';
+        case KEY_2:
+            return '2';
+        case KEY_3:
+            return '3';
         case KEY_4:
             return '4';
         case KEY_5:
@@ -205,6 +232,62 @@ uint32_t map_evdev_key(uint16_t code) {
             return '7';
         case KEY_8:
             return '8';
+        case KEY_9:
+            return '9';
+        case KEY_0:
+            return '0';
+        case KEY_Q:
+            return shift_active ? 'Q' : 'q';
+        case KEY_W:
+            return shift_active ? 'W' : 'w';
+        case KEY_E:
+            return shift_active ? 'E' : 'e';
+        case KEY_R:
+            return shift_active ? 'R' : 'r';
+        case KEY_T:
+            return shift_active ? 'T' : 't';
+        case KEY_Y:
+            return shift_active ? 'Y' : 'y';
+        case KEY_U:
+            return shift_active ? 'U' : 'u';
+        case KEY_I:
+            return shift_active ? 'I' : 'i';
+        case KEY_O:
+            return shift_active ? 'O' : 'o';
+        case KEY_P:
+            return shift_active ? 'P' : 'p';
+        case KEY_A:
+            return shift_active ? 'A' : 'a';
+        case KEY_S:
+            return shift_active ? 'S' : 's';
+        case KEY_D:
+            return shift_active ? 'D' : 'd';
+        case KEY_F:
+            return shift_active ? 'F' : 'f';
+        case KEY_G:
+            return shift_active ? 'G' : 'g';
+        case KEY_H:
+            return shift_active ? 'H' : 'h';
+        case KEY_J:
+            return shift_active ? 'J' : 'j';
+        case KEY_K:
+            return shift_active ? 'K' : 'k';
+        case KEY_L:
+            return shift_active ? 'L' : 'l';
+        case KEY_Z:
+            return shift_active ? 'Z' : 'z';
+        case KEY_X:
+            return shift_active ? 'X' : 'x';
+        case KEY_C:
+            return shift_active ? 'C' : 'c';
+        case KEY_V:
+            return shift_active ? 'V' : 'v';
+        case KEY_B:
+            return shift_active ? 'B' : 'b';
+        case KEY_N:
+            return shift_active ? 'N' : 'n';
+        case KEY_M:
+            return shift_active ? 'M' : 'm';
         case KEY_SYSRQ:
             return kKeyPrintScreen;
         case KEY_HELP:
@@ -225,9 +308,11 @@ bool has_nav_keys(int fd) {
         return (key_bits[code / bits_per_word] & (1UL << (code % bits_per_word))) != 0;
     };
 
-    return has_key(KEY_ESC) || has_key(KEY_LEFT) || has_key(KEY_RIGHT) || has_key(KEY_Z) ||
-           has_key(KEY_C) || has_key(KEY_4) || has_key(KEY_5) || has_key(KEY_6) ||
-           has_key(KEY_7) || has_key(KEY_8) || has_key(KEY_SYSRQ) || has_key(KEY_HELP);
+    return has_key(KEY_ESC) || has_key(KEY_LEFT) || has_key(KEY_RIGHT) || has_key(KEY_UP) ||
+           has_key(KEY_DOWN) || has_key(KEY_BACKSPACE) || has_key(KEY_DELETE) ||
+           has_key(KEY_ENTER) || has_key(KEY_KPENTER) || has_key(KEY_SPACE) ||
+           has_key(KEY_SYSRQ) || has_key(KEY_HELP) || has_key_in_range(key_bits, KEY_A, KEY_Z) ||
+           has_key_in_range(key_bits, KEY_0, KEY_9);
 }
 
 void evdev_read_cb(lv_indev_t* indev, lv_indev_data_t* data) {
@@ -244,16 +329,32 @@ void evdev_read_cb(lv_indev_t* indev, lv_indev_data_t* data) {
             continue;
         }
 
-        const auto key = map_evdev_key(input.code);
-        if (!key || input.value == 2) {
+        if (input.code == KEY_LEFTSHIFT || input.code == KEY_RIGHTSHIFT) {
+            keypad->shift_active = input.value != 0;
             continue;
         }
 
+        if (input.value == 2) {
+            continue;
+        }
+
+        const auto key = input.value ? map_evdev_key(input.code, keypad->shift_active)
+                                     : keypad->active_key;
+        if (!key) {
+            continue;
+        }
+
+        if (input.value) {
+            keypad->active_key = key;
+        }
         keypad->key = key;
         keypad->state = input.value ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
         keypad->router_event_pending = true;
         keypad->router_key = key;
         keypad->router_pressed = keypad->state == LV_INDEV_STATE_PRESSED;
+        if (!input.value) {
+            keypad->active_key = 0;
+        }
         data->continue_reading = true;
         break;
     }
@@ -419,6 +520,16 @@ const char* describe_key(uint32_t key) {
             return "Left";
         case LV_KEY_RIGHT:
             return "Right";
+        case LV_KEY_UP:
+            return "Up";
+        case LV_KEY_DOWN:
+            return "Down";
+        case LV_KEY_BACKSPACE:
+            return "Backspace";
+        case LV_KEY_DEL:
+            return "Delete";
+        case LV_KEY_ENTER:
+            return "Enter";
         case kKeyPrintScreen:
             return "PrintScreen";
         case kKeyHelp:
