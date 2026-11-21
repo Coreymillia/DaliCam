@@ -9,11 +9,11 @@
 namespace model {
 
 const char* BaseModel::app_title() const {
-    return "Template App";
+    return "DaliCam";
 }
 
 const char* BaseModel::greeting() const {
-    return "Hello World";
+    return "HELLO";
 }
 
 bool BaseModel::dark_mode() const {

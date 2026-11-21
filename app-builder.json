@@ -1,22 +1,22 @@
 {
-  "app_name": "Template",
-  "package_name": "template_app",
-  "version": "0.2.1",
-  "description": "Template Application for CardputerZero",
+  "app_name": "DaliCam",
+  "package_name": "dalicam",
+  "version": "0.1.0",
+  "description": "CardputerZero starter app for the DaliCam Gemini workflow",
 
   "store": {
-    "summary": "TODO: one line about your app (placeholders are auto-rejected)",
-    "description": "TODO: a longer description for the store detail page. Every TODO field in this store section must be replaced before publishing — the store validator rejects unedited template metadata.",
-    "categories": ["TODO: pick 1-2 real categories from docs/APP_BUILDER_JSON.md"],
+    "summary": "Sprint 0 foundation build for the DaliCam CardputerZero app",
+    "description": "A minimal starter app that proves the CardputerZero build, package, deploy, and launch path before adding Gemini image generation, camera capture, and web UI features.",
+    "categories": ["Utilities"],
     "screenshots": [
       "screenshot/app-simulator-dark-darwin.png",
       "screenshot/app-simulator-light-darwin.png"
     ],
-    "icon": "assets/images/template.png",
-    "license": "TODO: an SPDX id, e.g. MIT",
-    "source_repo": "https://github.com/CardputerZero/Template",
-    "author": { "github": "TODO-your-github-login", "display_name": "TODO: Your Name" },
-    "share_code": "TODO",
+    "icon": "assets/images/dalicam.png",
+    "license": "MIT",
+    "source_repo": "https://github.com/coreymillia/DaliCam",
+    "author": { "github": "coreymillia", "display_name": "Corey Millia" },
+    "share_code": "DALICAM-S0",
     "permissions": {
       "camera": false,
       "microphone": false,
