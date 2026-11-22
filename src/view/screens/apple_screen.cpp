@@ -10,6 +10,7 @@
 #include "bindings.h"
 #include "gemini_client.h"
 #include "logger.h"
+#include "openai_client.h"
 #include "paths.h"
 #include "camera_capture.h"
 #include "prompt_presets.h"
@@ -1045,8 +1046,15 @@ bool AppleScreen::generate_image(const std::optional<std::filesystem::path>& sou
         return false;
     }
 
-    if (settings_.gemini_api_key.empty()) {
-        action_status_ = "Set the API key in settings first";
+    const auto provider = app::Settings::provider_from_setting(settings_.generation_provider);
+    const auto provider_name = std::string(app::provider_label(provider));
+    const auto& api_key = provider == app::GenerationProvider::OpenAI ? settings_.openai_api_key
+                                                                       : settings_.gemini_api_key;
+    const auto& model = provider == app::GenerationProvider::OpenAI ? settings_.openai_model
+                                                                    : settings_.gemini_model;
+
+    if (api_key.empty()) {
+        action_status_ = "Set the " + provider_name + " API key in settings first";
         refresh_status_display();
         return false;
     }
@@ -1056,25 +1064,35 @@ bool AppleScreen::generate_image(const std::optional<std::filesystem::path>& sou
     const auto& selected_preset = preset ? *preset : app::default_prompt_preset();
     const std::string prompt = app::build_prompt(selected_preset, prompt_buffer_);
 
-    action_status_ = source_image_path ? "Generating from photo..." : "Generating image...";
+    action_status_ = source_image_path ? ("Generating from photo with " + provider_name + "...")
+                                       : ("Generating with " + provider_name + "...");
     refresh_status_display();
 
-    const auto output_path = paths_.build_output_path("gemini-image", ".jpg");
-    const auto result = app::generate_gemini_image_request(settings_.gemini_api_key,
-                                                           settings_.gemini_model,
-                                                           prompt,
-                                                           output_path,
-                                                           paths_.temp_dir(),
-                                                           source_image_path);
+    const auto output_path = paths_.build_output_path(provider == app::GenerationProvider::OpenAI ? "openai-image" : "gemini-image",
+                                                      ".jpg");
+    const auto result = provider == app::GenerationProvider::OpenAI
+                            ? app::generate_openai_image_request(api_key,
+                                                                 model,
+                                                                 prompt,
+                                                                 output_path,
+                                                                 paths_.temp_dir(),
+                                                                 source_image_path)
+                            : app::generate_gemini_image_request(api_key,
+                                                                 model,
+                                                                 prompt,
+                                                                 output_path,
+                                                                 paths_.temp_dir(),
+                                                                 source_image_path);
     busy_ = false;
     if (!result.ok) {
-        action_status_ = result.message.empty() ? "Gemini image request failed" : result.message;
+        action_status_ = result.message.empty() ? (provider_name + " image request failed") : result.message;
         pending_confirm_source_path_.clear();
         confirm_action_ = ConfirmAction::None;
         refresh_status_display();
         show_prompt_mode();
-        LOG_WARN("Gemini image generation failed for {} / {}: {}",
-                 settings_.gemini_model,
+        LOG_WARN("{} image generation failed for {} / {}: {}",
+                 provider_name,
+                 model,
                  settings_.default_personality,
                  result.message);
         return false;
@@ -1085,9 +1103,10 @@ bool AppleScreen::generate_image(const std::optional<std::filesystem::path>& sou
     pending_confirm_source_path_.clear();
     confirm_action_ = ConfirmAction::None;
     show_prompt_mode();
-    LOG_INFO("Gemini image saved to {} using {} / {}",
+    LOG_INFO("{} image saved to {} using {} / {}",
+             provider_name,
              result.image_path.string(),
-             settings_.gemini_model,
+             model,
              settings_.default_personality);
     return true;
 }
@@ -1129,7 +1148,12 @@ void AppleScreen::open_settings() {
 }
 
 std::string AppleScreen::compact_model_label() const {
-    return abbreviate_words(settings_.gemini_model);
+    const auto provider = app::Settings::provider_from_setting(settings_.generation_provider);
+    const auto& model = provider == app::GenerationProvider::OpenAI ? settings_.openai_model : settings_.gemini_model;
+    if (const auto* option = app::find_model_option(provider, model)) {
+        return abbreviate_words(option->label);
+    }
+    return abbreviate_words(model);
 }
 
 std::string AppleScreen::compact_personality_label() const {

@@ -475,6 +475,7 @@ file(GLOB_RECURSE UI_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/view/*.c"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/view/*.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/src/app/gemini_client.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/app/openai_client.cpp"
 )
 
 add_library(${PROJECT_NAME}_view
@@ -547,6 +548,7 @@ file(GLOB_RECURSE APP_SOURCES CONFIGURE_DEPENDS
 )
 list(REMOVE_ITEM APP_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/src/app/gemini_client.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/app/openai_client.cpp"
 )
 
 file(GLOB_RECURSE LOGGER_SOURCES CONFIGURE_DEPENDS

@@ -13,7 +13,6 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
-#include <vector>
 
 namespace app {
 namespace {
@@ -45,6 +44,14 @@ std::string unquote(std::string value) {
         }
     }
     return value;
+}
+
+std::string normalize_provider(std::string value) {
+    value = lowercase(trim(std::move(value)));
+    if (value == "openai") {
+        return std::string(provider_to_string(GenerationProvider::OpenAI));
+    }
+    return std::string(provider_to_string(GenerationProvider::Gemini));
 }
 
 std::string normalize_personality(std::string value) {
@@ -86,8 +93,23 @@ bool parse_bool(const std::string& value, bool& result) {
 } // namespace
 
 bool Settings::is_supported_gemini_model(std::string_view model) {
-    return std::find(kSupportedGeminiModels.begin(), kSupportedGeminiModels.end(), model) !=
-           kSupportedGeminiModels.end();
+    return std::any_of(kGeminiModelOptions.begin(), kGeminiModelOptions.end(), [&](const auto& option) {
+        return option.id == model;
+    });
+}
+
+bool Settings::is_supported_openai_model(std::string_view model) {
+    return std::any_of(kOpenAIModelOptions.begin(), kOpenAIModelOptions.end(), [&](const auto& option) {
+        return option.id == model;
+    });
+}
+
+GenerationProvider Settings::provider_from_setting(std::string_view provider) {
+    return provider_from_string(provider);
+}
+
+std::string_view Settings::provider_to_setting(GenerationProvider provider) {
+    return provider_to_string(provider);
 }
 
 bool Settings::load(const std::filesystem::path& path, std::string& error) {
@@ -130,8 +152,19 @@ bool Settings::load(const std::filesystem::path& path, std::string& error) {
                 gemini_model = value;
             }
         }
+        else if (section == "openai") {
+            if (key == "api_key") {
+                openai_api_key = value;
+            }
+            else if (key == "model") {
+                openai_model = value;
+            }
+        }
         else if (section == "generation") {
-            if (key == "default_personality") {
+            if (key == "provider") {
+                generation_provider = normalize_provider(value);
+            }
+            else if (key == "default_personality") {
                 default_personality = normalize_personality(value);
             }
             else if (key == "allow_text_only_generation") {
@@ -163,7 +196,11 @@ bool Settings::load(const std::filesystem::path& path, std::string& error) {
     if (!is_supported_gemini_model(gemini_model)) {
         gemini_model = std::string(kDefaultGeminiModel);
     }
+    if (!is_supported_openai_model(openai_model)) {
+        openai_model = std::string(kDefaultOpenAIModel);
+    }
 
+    generation_provider = normalize_provider(generation_provider);
     default_personality = normalize_personality(default_personality);
 
     return true;
@@ -182,9 +219,12 @@ bool Settings::save(const std::filesystem::path& path, std::string& error) const
         }
     }
 
-    const std::string model_to_save = is_supported_gemini_model(gemini_model)
-                                         ? gemini_model
-                                         : std::string(kDefaultGeminiModel);
+    const std::string gemini_model_to_save = is_supported_gemini_model(gemini_model)
+                                                 ? gemini_model
+                                                 : std::string(kDefaultGeminiModel);
+    const std::string openai_model_to_save = is_supported_openai_model(openai_model)
+                                                 ? openai_model
+                                                 : std::string(kDefaultOpenAIModel);
 
     std::ofstream output(path, std::ios::trunc);
     if (!output) {
@@ -194,9 +234,14 @@ bool Settings::save(const std::filesystem::path& path, std::string& error) const
 
     output << "[gemini]\n";
     output << "api_key=" << gemini_api_key << '\n';
-    output << "model=" << model_to_save << "\n\n";
+    output << "model=" << gemini_model_to_save << "\n\n";
+
+    output << "[openai]\n";
+    output << "api_key=" << openai_api_key << '\n';
+    output << "model=" << openai_model_to_save << "\n\n";
 
     output << "[generation]\n";
+    output << "provider=" << normalize_provider(generation_provider) << '\n';
     output << "default_personality=" << normalize_personality(default_personality) << '\n';
     output << "allow_text_only_generation=" << (allow_text_only_generation ? "yes" : "no")
            << "\n\n";

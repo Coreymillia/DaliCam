@@ -13,13 +13,15 @@
 
 namespace app {
 
-struct GeminiImageResult {
+struct ImageGenerationResult {
     bool ok{false};
     std::string message;
     std::filesystem::path response_path;
     std::filesystem::path error_path;
     std::filesystem::path image_path;
 };
+
+using GeminiImageResult = ImageGenerationResult;
 
 GeminiImageResult generate_gemini_image_request(std::string_view api_key,
                                                 std::string_view model,

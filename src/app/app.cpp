@@ -304,8 +304,10 @@ int Application::run() {
     Settings runtime_settings;
     std::string settings_error;
     if (runtime_settings.load(runtime_paths.settings_file(), settings_error)) {
-        LOG_INFO("loaded settings: model={}, preset={}, text_only={}, save_inputs={}, save_outputs={}",
+        LOG_INFO("loaded settings: provider={}, gemini_model={}, openai_model={}, preset={}, text_only={}, save_inputs={}, save_outputs={}",
+                 runtime_settings.generation_provider,
                  runtime_settings.gemini_model,
+                 runtime_settings.openai_model,
                  runtime_settings.default_personality,
                  runtime_settings.allow_text_only_generation ? "yes" : "no",
                  runtime_settings.save_source_images ? "yes" : "no",

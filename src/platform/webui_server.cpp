@@ -8,6 +8,7 @@
 
 #include "camera_capture.h"
 #include "../app/gemini_client.h"
+#include "../app/openai_client.h"
 #include "../app/prompt_presets.h"
 #include "../app/settings.h"
 
@@ -701,11 +702,17 @@ bool ImageViewerServer::handle_client(int client_fd) const {
             return send_text(client_fd, 400, "Bad Request", "text/html; charset=utf-8", body);
         }
 
-        if (settings.gemini_api_key.empty()) {
+        const auto provider = app::Settings::provider_from_setting(settings.generation_provider);
+        const auto provider_name = std::string(app::provider_label(provider));
+        const auto& api_key = provider == app::GenerationProvider::OpenAI ? settings.openai_api_key
+                                                                          : settings.gemini_api_key;
+        const auto& model = provider == app::GenerationProvider::OpenAI ? settings.openai_model
+                                                                        : settings.gemini_model;
+        if (api_key.empty()) {
             const auto body = build_settings_page(settings,
                                                   latest_image_any(),
                                                   message_box("Generation blocked",
-                                                              "Set the Gemini API key first.",
+                                                              "Set the " + provider_name + " API key first.",
                                                               false));
             return send_text(client_fd, 400, "Bad Request", "text/html; charset=utf-8", body);
         }
@@ -728,13 +735,22 @@ bool ImageViewerServer::handle_client(int client_fd) const {
             return send_text(client_fd, 500, "Internal Server Error", "text/html; charset=utf-8", body);
         }
 
-        const auto output_path = generated_dir_ / unique_upload_name("webui-gemini", ".jpg");
-        const auto result = app::generate_gemini_image_request(settings.gemini_api_key,
-                                                               settings.gemini_model,
-                                                               prompt,
-                                                               output_path,
-                                                               temp_dir,
-                                                               source_image_path);
+        const auto output_path = generated_dir_ / unique_upload_name(provider == app::GenerationProvider::OpenAI ? "webui-openai"
+                                                                                                                 : "webui-gemini",
+                                                                    ".jpg");
+        const auto result = provider == app::GenerationProvider::OpenAI
+                                ? app::generate_openai_image_request(api_key,
+                                                                     model,
+                                                                     prompt,
+                                                                     output_path,
+                                                                     temp_dir,
+                                                                     source_image_path)
+                                : app::generate_gemini_image_request(api_key,
+                                                                     model,
+                                                                     prompt,
+                                                                     output_path,
+                                                                     temp_dir,
+                                                                     source_image_path);
         if (!result.ok) {
             const auto body = build_settings_page(settings,
                                                   latest_image_any(),
@@ -755,11 +771,20 @@ bool ImageViewerServer::handle_client(int client_fd) const {
     if (request.method == "POST" && (path == "/" || path == "/settings")) {
         auto settings = load_settings_snapshot();
         const auto fields = parse_urlencoded_form(request.body);
-        if (const auto it = fields.find("api_key"); it != fields.end() && !it->second.empty()) {
+        if (const auto it = fields.find("generation_provider"); it != fields.end() && !it->second.empty()) {
+            settings.generation_provider = it->second;
+        }
+        if (const auto it = fields.find("gemini_api_key"); it != fields.end() && !it->second.empty()) {
             settings.gemini_api_key = it->second;
         }
-        if (const auto it = fields.find("gemini_model"); it != fields.end()) {
+        if (const auto it = fields.find("gemini_model"); it != fields.end() && !it->second.empty()) {
             settings.gemini_model = it->second;
+        }
+        if (const auto it = fields.find("openai_api_key"); it != fields.end() && !it->second.empty()) {
+            settings.openai_api_key = it->second;
+        }
+        if (const auto it = fields.find("openai_model"); it != fields.end() && !it->second.empty()) {
+            settings.openai_model = it->second;
         }
         if (const auto it = fields.find("default_personality"); it != fields.end()) {
             settings.default_personality = it->second;
@@ -1438,15 +1463,33 @@ std::string ImageViewerServer::build_settings_page(const app::Settings& settings
 
     html << "</div>";
 
-    html << "<div class=\"card\"><form method=\"post\" action=\"/settings\">"
-         << "<div><label for=\"api_key\">Gemini API key</label>"
-         << "<input id=\"api_key\" name=\"api_key\" type=\"password\" value=\"\" placeholder=\"Leave blank to keep the current key\" autocomplete=\"off\" spellcheck=\"false\"></div>"
-         << "<div class=\"row\"><div><label for=\"gemini_model\">Model</label><select id=\"gemini_model\" name=\"gemini_model\">";
+    const auto provider = app::Settings::provider_from_setting(settings.generation_provider);
+    const auto provider_value = app::provider_to_string(provider);
 
-    for (const auto& model : app::Settings::kSupportedGeminiModels) {
-        html << "<option value=\"" << escape_html(model) << "\"" << select_option(model, settings.gemini_model) << ">"
-             << escape_html(model) << "</option>";
-    }
+    auto append_model_options = [&](const auto& models, std::string_view selected_value) {
+        for (const auto& model : models) {
+            html << "<option value=\"" << escape_html(model.id) << "\""
+                 << select_option(model.id, selected_value) << ">" << escape_html(model.label)
+                 << "</option>";
+        }
+    };
+
+    html << "<div class=\"card\"><form method=\"post\" action=\"/settings\">"
+         << "<div class=\"row\"><div><label for=\"generation_provider\">Provider</label><select id=\"generation_provider\" name=\"generation_provider\">"
+         << "<option value=\"gemini\"" << select_option("gemini", provider_value) << ">Gemini</option>"
+         << "<option value=\"openai\"" << select_option("openai", provider_value) << ">OpenAI</option>"
+         << "</select></div><div class=\"small\">Choose the provider used when you press Generate.</div></div>"
+         << "<div><label for=\"gemini_api_key\">Gemini API key</label>"
+         << "<input id=\"gemini_api_key\" name=\"gemini_api_key\" type=\"password\" value=\"\" placeholder=\"Leave blank to keep the current key\" autocomplete=\"off\" spellcheck=\"false\"></div>"
+         << "<div class=\"row\"><div><label for=\"gemini_model\">Gemini model</label><select id=\"gemini_model\" name=\"gemini_model\">";
+
+    append_model_options(app::kGeminiModelOptions, settings.gemini_model);
+
+    html << "</select></div><div><label for=\"openai_api_key\">OpenAI API key</label>"
+         << "<input id=\"openai_api_key\" name=\"openai_api_key\" type=\"password\" value=\"\" placeholder=\"Leave blank to keep the current key\" autocomplete=\"off\" spellcheck=\"false\"></div></div>"
+         << "<div class=\"row\"><div><label for=\"openai_model\">OpenAI model</label><select id=\"openai_model\" name=\"openai_model\">";
+
+    append_model_options(app::kOpenAIModelOptions, settings.openai_model);
 
     html << "</select></div><div><label for=\"default_personality\">Personality</label><select id=\"default_personality\" name=\"default_personality\">";
     for (const auto& preset : app::prompt_presets()) {
