@@ -20,6 +20,7 @@ BaseViewModel::BaseViewModel()
       greeting_subject_(model_.greeting()),
       dark_mode_subject_(model_.dark_mode()),
       current_page_subject_(page_to_int(model_.current_page())),
+      header_status_subject_(""),
       counter_subject_(0),
       bold_text_subject_(false),
       info_visible_subject_(false),
@@ -41,6 +42,10 @@ lv_subject_t* BaseViewModel::dark_mode_subject() {
 
 lv_subject_t* BaseViewModel::current_page_subject() {
     return current_page_subject_.native();
+}
+
+lv_subject_t* BaseViewModel::header_status_subject() {
+    return header_status_subject_.native();
 }
 
 lv_subject_t* BaseViewModel::counter_subject() {
@@ -71,6 +76,10 @@ void BaseViewModel::set_dark_mode(bool enabled) {
 void BaseViewModel::toggle_dark_mode() {
     model_.toggle_dark_mode();
     publish_all();
+}
+
+void BaseViewModel::set_header_status(const char* text) {
+    header_status_subject_.set(text ? text : "");
 }
 
 model::AppPage BaseViewModel::current_page() const {

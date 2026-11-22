@@ -100,15 +100,24 @@ void TitleBar::build() {
     auto* title = lv_label_create(core_obj_);
     lv_label_bind_text(title, view_model_.title_subject(), nullptr);
     lv_label_set_long_mode(title, LV_LABEL_LONG_DOT);
-    lv_obj_set_width(title, 142);
+    lv_obj_set_width(title, 84);
     const lv_font_t* title_font = assets_.load_standard_font(14);
     lv_obj_set_style_text_font(title, title_font ? title_font : &lv_font_montserrat_14, 0);
     lv_obj_align(title, LV_ALIGN_LEFT_MID, 8, 0);
     reactive::bind_theme(title, view_model_.dark_mode_subject(), reactive::ThemeRole::Text);
 
+    header_status_label_ = lv_label_create(core_obj_);
+    lv_label_bind_text(header_status_label_, view_model_.header_status_subject(), nullptr);
+    lv_label_set_long_mode(header_status_label_, LV_LABEL_LONG_DOT);
+    lv_obj_set_width(header_status_label_, 108);
+    const lv_font_t* header_status_font = assets_.load_standard_font(11, app::StandardFontWeight::Regular);
+    lv_obj_set_style_text_font(header_status_label_, header_status_font ? header_status_font : &lv_font_montserrat_12, 0);
+    lv_obj_align(header_status_label_, LV_ALIGN_CENTER, 0, 0);
+    reactive::bind_theme(header_status_label_, view_model_.dark_mode_subject(), reactive::ThemeRole::Text);
+
     auto* status = lv_obj_create(core_obj_);
     lv_obj_remove_style_all(status);
-    lv_obj_set_size(status, 160, LV_PCT(100));
+    lv_obj_set_size(status, 144, LV_PCT(100));
     lv_obj_align(status, LV_ALIGN_RIGHT_MID, -5, 0);
     lv_obj_set_flex_flow(status, LV_FLEX_FLOW_ROW);
     lv_obj_set_flex_align(status, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);

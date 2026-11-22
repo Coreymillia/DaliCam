@@ -11,9 +11,10 @@
 #include <filesystem>
 #include <optional>
 #include <string>
-#include <unordered_map>
 #include <string_view>
 #include <thread>
+#include <unordered_map>
+#include <vector>
 
 namespace app {
 class Settings;
@@ -70,11 +71,14 @@ private:
     struct Route {
         Source source;
         bool raw{false};
+        std::optional<std::string> filename;
     };
 
     std::filesystem::path source_dir(Source source) const;
     std::string source_label(Source source) const;
+    std::vector<ImageInfo> list_images(Source source) const;
     std::optional<ImageInfo> latest_image(Source source) const;
+    std::optional<ImageInfo> image_by_name(Source source, std::string_view filename) const;
     std::optional<LatestImage> latest_image_any() const;
 
     bool handle_client(int client_fd) const;
@@ -109,7 +113,8 @@ private:
     std::string build_settings_page(const app::Settings& settings,
                                     const std::optional<LatestImage>& latest,
                                     std::optional<std::string> message) const;
-    std::string build_page(Source source, const std::optional<ImageInfo>& image) const;
+    std::string build_page(Source source,
+                           std::optional<std::string> selected_filename) const;
 
     std::filesystem::path camera_dir_;
     std::filesystem::path generated_dir_;

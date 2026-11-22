@@ -6,6 +6,7 @@
 
 #include "webui_server.h"
 
+#include "../app/gemini_client.h"
 #include "../app/prompt_presets.h"
 #include "../app/settings.h"
 
@@ -190,6 +191,36 @@ std::string unique_upload_name(std::string_view prefix, std::string_view extensi
     std::ostringstream out;
     out << prefix << '-' << timestamp << '-' << sequence.fetch_add(1, std::memory_order_relaxed) << extension;
     return out.str();
+}
+
+std::tm local_tm_from_file_time(std::filesystem::file_time_type time_point) {
+    using namespace std::chrono;
+    const auto now_system = system_clock::now();
+    const auto now_file = std::filesystem::file_time_type::clock::now();
+    const auto system_time = time_point_cast<system_clock::duration>(time_point - now_file + now_system);
+    const auto system_time_t = system_clock::to_time_t(system_time);
+
+    std::tm local_time{};
+#if defined(_WIN32)
+    localtime_s(&local_time, &system_time_t);
+#else
+    localtime_r(&system_time_t, &local_time);
+#endif
+    return local_time;
+}
+
+std::string format_day_label(std::filesystem::file_time_type time_point) {
+    const auto local_time = local_tm_from_file_time(time_point);
+    char buffer[32]{};
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d", &local_time);
+    return buffer;
+}
+
+std::string format_time_label(std::filesystem::file_time_type time_point) {
+    const auto local_time = local_tm_from_file_time(time_point);
+    char buffer[32]{};
+    std::strftime(buffer, sizeof(buffer), "%H:%M:%S", &local_time);
+    return buffer;
 }
 
 bool string_ends_with(std::string_view value, std::string_view suffix) {
@@ -403,16 +434,14 @@ std::string ImageViewerServer::source_label(Source source) const {
     return "Camera";
 }
 
-std::optional<ImageViewerServer::ImageInfo> ImageViewerServer::latest_image(Source source) const {
+std::vector<ImageViewerServer::ImageInfo> ImageViewerServer::list_images(Source source) const {
     const auto directory = source_dir(source);
     std::error_code error;
     if (!std::filesystem::exists(directory, error) || error) {
-        return std::nullopt;
+        return {};
     }
 
-    std::optional<ImageInfo> latest;
-    std::filesystem::file_time_type latest_time{};
-
+    std::vector<ImageInfo> images;
     for (std::filesystem::directory_iterator it(directory, error); !error && it != std::filesystem::directory_iterator(); ++it) {
         const auto& entry = *it;
         std::error_code entry_error;
@@ -430,40 +459,63 @@ std::optional<ImageViewerServer::ImageInfo> ImageViewerServer::latest_image(Sour
             continue;
         }
 
-        if (!latest || write_time > latest_time) {
-            ImageInfo info;
-            info.path = entry.path();
-            info.filename = entry.path().filename().string();
-            info.size_bytes = std::filesystem::file_size(entry.path(), entry_error);
-            if (entry_error) {
-                continue;
-            }
-
-            if (ext == ".jpg" || ext == ".jpeg") {
-                int width = -1;
-                int height = -1;
-                std::string dimension_error;
-                if (read_jpeg_dimensions(entry.path(), width, height, dimension_error)) {
-                    info.width = width;
-                    info.height = height;
-                }
-            } else if (ext == ".png") {
-                int width = -1;
-                int height = -1;
-                std::string dimension_error;
-                if (read_png_dimensions(entry.path(), width, height, dimension_error)) {
-                    info.width = width;
-                    info.height = height;
-                }
-            }
-
-            info.modified_at = write_time;
-            latest_time = write_time;
-            latest = std::move(info);
+        ImageInfo info;
+        info.path = entry.path();
+        info.filename = entry.path().filename().string();
+        info.size_bytes = std::filesystem::file_size(entry.path(), entry_error);
+        if (entry_error) {
+            continue;
         }
+
+        if (ext == ".jpg" || ext == ".jpeg") {
+            int width = -1;
+            int height = -1;
+            std::string dimension_error;
+            if (read_jpeg_dimensions(entry.path(), width, height, dimension_error)) {
+                info.width = width;
+                info.height = height;
+            }
+        } else if (ext == ".png") {
+            int width = -1;
+            int height = -1;
+            std::string dimension_error;
+            if (read_png_dimensions(entry.path(), width, height, dimension_error)) {
+                info.width = width;
+                info.height = height;
+            }
+        }
+
+        info.modified_at = write_time;
+        images.push_back(std::move(info));
     }
 
-    return latest;
+    std::sort(images.begin(), images.end(), [](const ImageInfo& a, const ImageInfo& b) {
+        return a.modified_at > b.modified_at;
+    });
+    return images;
+}
+
+std::optional<ImageViewerServer::ImageInfo> ImageViewerServer::latest_image(Source source) const {
+    const auto images = list_images(source);
+    if (images.empty()) {
+        return std::nullopt;
+    }
+    return images.front();
+}
+
+std::optional<ImageViewerServer::ImageInfo> ImageViewerServer::image_by_name(Source source, std::string_view filename) const {
+    if (filename.empty()) {
+        return std::nullopt;
+    }
+
+    const auto images = list_images(source);
+    const auto target = std::filesystem::path(filename).filename();
+    for (const auto& image : images) {
+        if (image.filename == target.string()) {
+            return image;
+        }
+    }
+    return std::nullopt;
 }
 
 std::optional<ImageViewerServer::LatestImage> ImageViewerServer::latest_image_any() const {
@@ -536,6 +588,99 @@ bool ImageViewerServer::handle_client(int client_fd) const {
         return send_text(client_fd, 200, "OK", "text/html; charset=utf-8", body);
     }
 
+    if (request.method == "POST" && path == "/generate") {
+        auto settings = load_settings_snapshot();
+        const auto fields = parse_urlencoded_form(request.body);
+        const auto prompt_it = fields.find("prompt");
+        const std::string user_prompt = prompt_it != fields.end() ? prompt_it->second : std::string();
+
+        const auto* preset = app::find_prompt_preset(settings.default_personality);
+        const auto& selected_preset = preset ? *preset : app::default_prompt_preset();
+        const std::string prompt = app::build_prompt(selected_preset, user_prompt);
+
+        std::optional<std::filesystem::path> source_image_path;
+        if (const auto source_it = fields.find("source"); source_it != fields.end()) {
+            if (const auto filename_it = fields.find("source_filename"); filename_it != fields.end() && !filename_it->second.empty()) {
+                std::optional<Source> source;
+                const auto lowered_source = lowercase(source_it->second);
+                if (lowered_source == "camera") {
+                    source = Source::Camera;
+                }
+                else if (lowered_source == "generated") {
+                    source = Source::Generated;
+                }
+                else if (lowered_source == "uploads") {
+                    source = Source::Uploads;
+                }
+
+                if (source) {
+                    if (const auto image = image_by_name(*source, filename_it->second)) {
+                        source_image_path = image->path;
+                    }
+                }
+            }
+        }
+
+        if (!source_image_path && !settings.allow_text_only_generation) {
+            const auto body = build_settings_page(settings,
+                                                  latest_image_any(),
+                                                  message_box("Generation blocked",
+                                                              "Text-only generation is disabled, and no source image was selected.",
+                                                              false));
+            return send_text(client_fd, 400, "Bad Request", "text/html; charset=utf-8", body);
+        }
+
+        if (settings.gemini_api_key.empty()) {
+            const auto body = build_settings_page(settings,
+                                                  latest_image_any(),
+                                                  message_box("Generation blocked",
+                                                              "Set the Gemini API key first.",
+                                                              false));
+            return send_text(client_fd, 400, "Bad Request", "text/html; charset=utf-8", body);
+        }
+
+        std::error_code filesystem_error;
+        std::filesystem::create_directories(generated_dir_, filesystem_error);
+        if (filesystem_error) {
+            const auto body = build_settings_page(settings,
+                                                  latest_image_any(),
+                                                  message_box("Generation failed", filesystem_error.message(), false));
+            return send_text(client_fd, 500, "Internal Server Error", "text/html; charset=utf-8", body);
+        }
+
+        const auto temp_dir = std::filesystem::temp_directory_path() / "dalicam-webui";
+        std::filesystem::create_directories(temp_dir, filesystem_error);
+        if (filesystem_error) {
+            const auto body = build_settings_page(settings,
+                                                  latest_image_any(),
+                                                  message_box("Generation failed", filesystem_error.message(), false));
+            return send_text(client_fd, 500, "Internal Server Error", "text/html; charset=utf-8", body);
+        }
+
+        const auto output_path = generated_dir_ / unique_upload_name("webui-gemini", ".jpg");
+        const auto result = app::generate_gemini_image_request(settings.gemini_api_key,
+                                                               settings.gemini_model,
+                                                               prompt,
+                                                               output_path,
+                                                               temp_dir,
+                                                               source_image_path);
+        if (!result.ok) {
+            const auto body = build_settings_page(settings,
+                                                  latest_image_any(),
+                                                  message_box("Generation failed",
+                                                              result.message.empty() ? "The image request did not complete." : result.message,
+                                                              false));
+            return send_text(client_fd, 500, "Internal Server Error", "text/html; charset=utf-8", body);
+        }
+
+        const auto body = build_settings_page(settings,
+                                              latest_image_any(),
+                                              message_box("Image generated",
+                                                          "The new image was saved and should appear in the gallery shortly.",
+                                                          true));
+        return send_text(client_fd, 200, "OK", "text/html; charset=utf-8", body);
+    }
+
     if (request.method == "POST" && (path == "/" || path == "/settings")) {
         auto settings = load_settings_snapshot();
         const auto fields = parse_urlencoded_form(request.body);
@@ -576,8 +721,9 @@ bool ImageViewerServer::handle_client(int client_fd) const {
         return send_text(client_fd, 404, "Not Found", "text/html; charset=utf-8", body);
     }
 
-    const auto image = latest_image(route->source);
     if (route->raw) {
+        const auto image = route->filename ? image_by_name(route->source, *route->filename)
+                                           : latest_image(route->source);
         if (!image) {
             const auto body = make_error_page(404, "Not Found", "No image is available yet");
             return send_text(client_fd, 404, "Not Found", "text/html; charset=utf-8", body);
@@ -587,7 +733,7 @@ bool ImageViewerServer::handle_client(int client_fd) const {
         return send_file(client_fd, image->path, content_type_for_path(image->path), file_error);
     }
 
-    const auto body = build_page(route->source, image);
+    const auto body = build_page(route->source, route->filename);
     return send_text(client_fd, 200, "OK", "text/html; charset=utf-8", body);
 }
 
@@ -752,23 +898,34 @@ std::string ImageViewerServer::strip_query(std::string path) {
 }
 
 std::optional<ImageViewerServer::Route> ImageViewerServer::parse_route(std::string_view path) {
-    if (path == "/camera") {
-        return Route{Source::Camera, false};
+    const auto make_route = [&](Source source, bool raw, std::optional<std::string> filename = std::nullopt) {
+        return Route{source, raw, std::move(filename)};
+    };
+
+    const auto match_prefix = [&](std::string_view prefix, Source source) -> std::optional<Route> {
+        if (path == prefix) {
+            return make_route(source, false);
+        }
+        if (path == std::string(prefix) + "/raw") {
+            return make_route(source, true);
+        }
+        if (path.rfind(std::string(prefix) + "/raw/", 0) == 0) {
+            return make_route(source, true, std::string(path.substr(prefix.size() + 5)));
+        }
+        if (path.rfind(std::string(prefix) + "/", 0) == 0) {
+            return make_route(source, false, std::string(path.substr(prefix.size() + 1)));
+        }
+        return std::nullopt;
+    };
+
+    if (const auto route = match_prefix("/camera", Source::Camera)) {
+        return route;
     }
-    if (path == "/camera/raw") {
-        return Route{Source::Camera, true};
+    if (const auto route = match_prefix("/generated", Source::Generated)) {
+        return route;
     }
-    if (path == "/generated") {
-        return Route{Source::Generated, false};
-    }
-    if (path == "/generated/raw") {
-        return Route{Source::Generated, true};
-    }
-    if (path == "/uploads") {
-        return Route{Source::Uploads, false};
-    }
-    if (path == "/uploads/raw") {
-        return Route{Source::Uploads, true};
+    if (const auto route = match_prefix("/uploads", Source::Uploads)) {
+        return route;
     }
     return std::nullopt;
 }
@@ -1057,6 +1214,8 @@ std::string ImageViewerServer::build_settings_page(const app::Settings& settings
          << ".small{color:#bbb;font-size:0.92rem;}"
          << "code{background:#222;padding:2px 6px;border-radius:4px;}"
          << ".upload-status{min-height:1.2em;color:#9fd3ff;}"
+         << ".generate-status{min-height:1.2em;color:#9fd3ff;}"
+         << ".side-column{display:grid;gap:14px;}"
          << ".section-title{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:10px;}"
          << "</style></head><body>"
          << "<header><h1>DaliCam Home</h1><div class=\"small\">Latest photo, uploads, and settings for the main app.</div></header>"
@@ -1102,7 +1261,8 @@ std::string ImageViewerServer::build_settings_page(const app::Settings& settings
 
     html << "</div>";
 
-    html << "<div class=\"card\">"
+    html << "<div class=\"side-column\">"
+         << "<div class=\"card\">"
          << "<div class=\"section-title\"><strong>Upload image</strong><span class=\"small\">PNG or JPEG</span></div>"
          << "<form id=\"upload-form\">"
          << "<input id=\"upload-file\" type=\"file\" accept=\"image/png,image/jpeg\">"
@@ -1114,6 +1274,29 @@ std::string ImageViewerServer::build_settings_page(const app::Settings& settings
          << "(function(){const form=document.getElementById('upload-form');const input=document.getElementById('upload-file');const status=document.getElementById('upload-status');if(!form||!input||!status){return;}form.addEventListener('submit',async function(event){event.preventDefault();const file=input.files&&input.files[0];if(!file){status.textContent='Choose an image first.';return;}status.textContent='Uploading…';try{const response=await fetch('/upload',{method:'POST',headers:{'Content-Type':file.type||'application/octet-stream','X-Filename':file.name||'upload'},body:file});if(!response.ok){status.textContent='Upload failed ('+response.status+').';return;}window.location.reload();}catch(error){status.textContent='Upload failed.';}});})();"
          << "</script>"
          << "<div class=\"small\" style=\"margin-top:10px\">Uploaded files are stored separately so we can compare them with captured and generated images.</div>"
+         << "</div>"
+         << "<div class=\"card\">"
+         << "<div class=\"section-title\"><strong>Generate image</strong><span class=\"small\">Press Enter or click Generate</span></div>"
+         << "<form id=\"generate-form\" method=\"post\" action=\"/generate\" data-has-image=\"" << (latest ? "yes" : "no") << "\">"
+         << "<input id=\"generate-prompt\" name=\"prompt\" type=\"text\" placeholder=\"Optional prompt — blank uses preset only\" autocomplete=\"off\" spellcheck=\"true\">";
+
+    if (latest) {
+        const auto latest_source_value = latest->source == Source::Camera ? "camera"
+                                      : latest->source == Source::Generated ? "generated"
+                                                                            : "uploads";
+        html << "<input type=\"hidden\" name=\"source\" value=\"" << latest_source_value << "\">"
+             << "<input type=\"hidden\" name=\"source_filename\" value=\"" << escape_html(latest->image.filename) << "\">";
+    }
+
+    html << "<div class=\"actions\" style=\"margin-top:10px\">"
+         << "<button id=\"generate-button\" type=\"submit\">Generate image</button>"
+         << "<span id=\"generate-status\" class=\"generate-status\"></span>"
+         << "</div></form>"
+         << "<div class=\"small\" style=\"margin-top:10px\">The latest image above will be used as the source when available. Leave the prompt empty to use the preset only.</div>"
+         << "<script>"
+         << "(function(){const form=document.getElementById('generate-form');const prompt=document.getElementById('generate-prompt');const button=document.getElementById('generate-button');const status=document.getElementById('generate-status');if(!form||!prompt||!button||!status){return;}form.addEventListener('submit',async function(event){event.preventDefault();const hasImage=form.dataset.hasImage==='yes';const text=(prompt.value||'').trim();const confirmText=hasImage?(text?'Generate from the latest image with this prompt?':'Generate from the latest image using the preset only?'):(text?'Generate a new image with this prompt?':'Generate a new image using the preset only?');if(!window.confirm(confirmText)){return;}button.disabled=true;status.textContent='Generating…';try{const body=new URLSearchParams(new FormData(form));const response=await fetch(form.action,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});const html=await response.text();document.open();document.write(html);document.close();}catch(error){button.disabled=false;status.textContent='Generation failed.';}});})();"
+         << "</script>"
+         << "</div>"
          << "</div>";
 
     html << "</div>";
@@ -1147,28 +1330,50 @@ std::string ImageViewerServer::build_settings_page(const app::Settings& settings
          << "<option value=\"no\"" << select_option("no", bool_option(settings.save_generated_images)) << ">No</option>"
          << "</select></div><div class=\"small\">These values are written to <code>" << escape_html(settings_path_.string()) << "</code>.</div></div>"
          << "<div class=\"actions\"><button type=\"submit\">Save settings</button>"
-         << "<a class=\"button\" href=\"/camera\">Open camera viewer</a>"
-         << "<a class=\"button\" href=\"/generated\">Open generated viewer</a>"
-         << "<a class=\"button\" href=\"/uploads\">Open uploads viewer</a>"
+         << "<a class=\"button\" href=\"/camera\">Open camera gallery</a>"
+         << "<a class=\"button\" href=\"/generated\">Open generated gallery</a>"
+         << "<a class=\"button\" href=\"/uploads\">Open uploads gallery</a>"
          << "</div></form></div>"
          << "</main></body></html>";
 
     return html.str();
 }
 
-std::string ImageViewerServer::build_page(Source source, const std::optional<ImageInfo>& image) const {
+std::string ImageViewerServer::build_page(Source source, std::optional<std::string> selected_filename) const {
     const auto title = source_label(source);
-    const auto other_path = source == Source::Camera ? "/generated"
-                            : source == Source::Generated ? "/uploads"
-                                                          : "/camera";
-    const auto raw_path = source == Source::Camera ? "/camera/raw"
-                        : source == Source::Generated ? "/generated/raw"
-                                                      : "/uploads/raw";
+    const auto images = list_images(source);
+    std::optional<ImageInfo> selected_image;
+    if (selected_filename) {
+        selected_image = image_by_name(source, *selected_filename);
+    }
+    if (!selected_image && !images.empty()) {
+        selected_image = images.front();
+    }
+
+    const std::string gallery_base = source == Source::Camera ? "/camera"
+                                    : source == Source::Generated ? "/generated"
+                                                                  : "/uploads";
+    const std::string raw_base = source == Source::Camera ? "/camera/raw"
+                                : source == Source::Generated ? "/generated/raw"
+                                                              : "/uploads/raw";
+    const auto cache_buster = std::to_string(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch()).count());
+
+    std::vector<std::string> day_order;
+    std::unordered_map<std::string, std::vector<const ImageInfo*>> grouped;
+    for (const auto& image : images) {
+        const auto day = format_day_label(image.modified_at);
+        if (grouped.find(day) == grouped.end()) {
+            day_order.push_back(day);
+        }
+        grouped[day].push_back(&image);
+    }
 
     std::ostringstream html;
     html << "<!doctype html><html><head><meta charset=\"utf-8\">"
          << "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-         << "<title>DaliCam Viewer</title>"
+         << "<title>" << escape_html(title) << " Gallery</title>"
          << "<style>"
          << ":root{color-scheme:dark;}"
          << "body{margin:0;font-family:system-ui,-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif;background:#101010;color:#eee;}"
@@ -1176,44 +1381,91 @@ std::string ImageViewerServer::build_page(Source source, const std::optional<Ima
          << ".meta{display:flex;flex-wrap:wrap;gap:12px;font-size:0.92rem;color:#bbb;}"
          << ".links{display:flex;flex-wrap:wrap;gap:8px;}"
          << ".links a{color:#fff;text-decoration:none;background:#2a2a2a;border-radius:8px;padding:8px 12px;}"
-         << ".viewer{padding:12px;max-width:100vw;max-height:calc(100vh - 76px);background:#000;display:flex;justify-content:center;align-items:center;overflow:auto;}"
-         << ".viewer img{display:block;width:auto;height:auto;max-width:100%;max-height:calc(100vh - 100px);object-fit:contain;image-rendering:auto;}"
+         << ".shell{padding:14px;display:grid;gap:14px;max-width:1200px;margin:0 auto;}"
+         << ".card{background:#151515;border:1px solid #2f2f2f;border-radius:10px;padding:14px;}"
+         << ".preview{display:grid;gap:12px;}"
+         << ".preview img{display:block;width:100%;max-width:100%;max-height:56vh;object-fit:contain;background:#000;border-radius:8px;}"
+         << ".thumb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;}"
+         << ".thumb{display:grid;gap:8px;background:#101010;border:1px solid #333;border-radius:10px;padding:10px;text-decoration:none;color:#eee;}"
+         << ".thumb:hover{border-color:#5a8cff;}"
+         << ".thumb img{display:block;width:100%;height:140px;object-fit:cover;background:#000;border-radius:8px;}"
+         << ".thumb-meta{font-size:0.88rem;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
+         << ".thumb-sub{font-size:0.8rem;color:#aaa;}"
+         << ".day-group{border:1px solid #2a2a2a;border-radius:10px;padding:10px;background:#141414;}"
+         << ".section-title{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:10px;}"
+         << ".small{color:#bbb;font-size:0.92rem;}"
+         << ".day-group + .day-group{margin-top:10px;}"
+         << ".day-group summary{cursor:pointer;font-weight:700;list-style:none;}"
+         << ".day-group summary::-webkit-details-marker{display:none;}"
+         << ".actions{display:flex;flex-wrap:wrap;gap:8px;}"
+         << ".actions a{color:#fff;text-decoration:none;background:#2a2a2a;border-radius:8px;padding:8px 12px;}"
          << ".notice{padding:16px;}"
          << "code{background:#222;padding:2px 6px;border-radius:4px;}"
          << "</style></head><body>"
-         << "<header><div><strong>" << escape_html(title) << "</strong>"
-         << "<div class=\"meta\">";
-
-    if (image) {
-        html << "<span>File: " << escape_html(image->filename) << "</span>"
-             << "<span>Size: " << escape_html(format_bytes(image->size_bytes)) << "</span>";
-        if (image->width > 0 && image->height > 0) {
-            html << "<span>Dimensions: " << image->width << " × " << image->height << "</span>";
+         << "<header><div><strong>" << escape_html(title) << " Gallery</strong>"
+         << "<div class=\"meta\">"
+         << "<span>" << images.size() << " image" << (images.size() == 1 ? "" : "s") << "</span>";
+    if (selected_image) {
+        html << "<span>Selected: " << escape_html(selected_image->filename) << "</span>";
+        if (selected_image->width > 0 && selected_image->height > 0) {
+            html << "<span>Dimensions: " << selected_image->width << " × " << selected_image->height << "</span>";
         }
-    } else {
-        html << "<span>No image found yet</span>";
     }
-
     html << "</div></div><div class=\"links\">"
          << "<a href=\"/\">Settings</a>"
-         << "<a href=\"" << raw_path << "\">Open raw file</a>"
-         << "<a href=\"" << other_path << "\">Switch source</a>"
-         << "</div></header>";
+         << "<a href=\"/camera\">Camera</a>"
+         << "<a href=\"/generated\">Generated</a>"
+         << "<a href=\"/uploads\">Uploads</a>"
+         << "</div></header>"
+         << "<div class=\"shell\">";
 
-    if (image) {
-        const auto cache_buster = std::to_string(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count());
-        html << "<div class=\"viewer\"><img src=\"" << raw_path << "?t=" << cache_buster
-             << "\" alt=\"Latest image\"></div>"
-             << "<script>setInterval(()=>{const img=document.querySelector('img');if(img){img.src='" << raw_path
-             << "?t='+Date.now();}},5000);</script>";
+    if (selected_image) {
+        const auto selected_raw = raw_base + "/" + selected_image->filename;
+        html << "<section class=\"card preview\">"
+             << "<div class=\"section-title\"><strong>Selected image</strong><span class=\"small\">Click any thumbnail to switch</span></div>"
+             << "<img src=\"" << selected_raw << "?t=" << cache_buster << "\" alt=\"Selected image\">"
+             << "<div class=\"meta\">"
+             << "<span>File: " << escape_html(selected_image->filename) << "</span>"
+             << "<span>Size: " << escape_html(format_bytes(selected_image->size_bytes)) << "</span>";
+        if (selected_image->width > 0 && selected_image->height > 0) {
+            html << "<span>Dimensions: " << selected_image->width << " × " << selected_image->height << "</span>";
+        }
+        html << "</div>"
+             << "<div class=\"actions\">"
+             << "<a href=\"" << selected_raw << "\">Open raw</a>"
+             << "<a href=\"" << gallery_base << "\">Back to newest</a>"
+             << "</div></section>";
     } else {
-        html << "<div class=\"notice\">No images were found in <code>" << escape_html(source_dir(source).string())
-             << "</code>.</div>";
+        html << "<section class=\"card notice\">No images were found in <code>" << escape_html(source_dir(source).string())
+             << "</code>.</section>";
     }
 
-    html << "</body></html>";
+    html << "<section class=\"card\">"
+         << "<div class=\"section-title\"><strong>By day</strong><span class=\"small\">Most recent first</span></div>";
+
+    if (images.empty()) {
+        html << "<div class=\"small\">There are no images in this gallery yet.</div>";
+    } else {
+        for (const auto& day : day_order) {
+            const auto& entries = grouped[day];
+            html << "<details class=\"day-group\" open>"
+                 << "<summary>" << escape_html(day) << " <span class=\"small\">(" << entries.size() << ")</span></summary>"
+                 << "<div class=\"thumb-grid\">";
+            for (const auto* entry : entries) {
+                const auto selected_link = gallery_base + "/" + entry->filename;
+                const auto thumb_raw = raw_base + "/" + entry->filename;
+                html << "<a class=\"thumb\" href=\"" << selected_link << "\">"
+                     << "<img loading=\"lazy\" src=\"" << thumb_raw << "?t=" << cache_buster << "\" alt=\"" << escape_html(entry->filename) << "\">"
+                     << "<span class=\"thumb-meta\">" << escape_html(entry->filename) << "</span>"
+                     << "<span class=\"thumb-sub\">" << escape_html(format_time_label(entry->modified_at)) << " • "
+                     << escape_html(format_bytes(entry->size_bytes)) << "</span>"
+                     << "</a>";
+            }
+            html << "</div></details>";
+        }
+    }
+
+    html << "</section></div></body></html>";
     return html.str();
 }
 

@@ -30,6 +30,7 @@ private:
     viewmodel::BaseViewModel& view_model_;
     app::AssetManager& assets_;
     lv_obj_t* time_label_{nullptr};
+    lv_obj_t* header_status_label_{nullptr};
     lv_obj_t* wifi_label_{nullptr};
     lv_obj_t* ethernet_label_{nullptr};
     lv_obj_t* battery_icon_label_{nullptr};
