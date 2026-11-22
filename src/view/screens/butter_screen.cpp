@@ -172,6 +172,7 @@ void ButterScreen::build_content(lv_obj_t* content) {
     lv_obj_set_width(preview_image_, LV_PCT(100));
     lv_obj_set_height(preview_image_, 72);
     lv_image_set_inner_align(preview_image_, LV_IMAGE_ALIGN_CONTAIN);
+    lv_image_set_antialias(preview_image_, true);
     lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
 
     refresh_api_key_display();

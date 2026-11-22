@@ -11,6 +11,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace app {
 class Paths;
@@ -25,6 +26,7 @@ public:
                 app::AssetManager& assets,
                 app::Settings& settings,
                 const app::Paths& paths);
+    ~AppleScreen() override;
 
     bool handle_key(uint32_t key, bool long_pressed) override;
 
@@ -49,6 +51,7 @@ private:
     void clear_prompt();
     void show_preview_mode();
     void show_capture_confirm_mode();
+    void refresh_latest_preview_from_storage();
     bool generate_image(const std::optional<std::filesystem::path>& source_image_path = std::nullopt);
     bool capture_photo();
     void set_preview_image(const std::filesystem::path& image_path);
@@ -56,6 +59,7 @@ private:
     static void settings_button_cb(lv_event_t* event);
     static void capture_button_cb(lv_event_t* event);
     static void prompt_button_cb(lv_event_t* event);
+    static void preview_refresh_timer_cb(lv_timer_t* timer);
     static std::string to_lvgl_path(const std::filesystem::path& path);
     static bool is_printable_key(uint32_t key);
 
@@ -75,11 +79,13 @@ private:
     lv_obj_t* prompt_button_{nullptr};
     std::string preview_path_;
     std::string preview_lvgl_path_;
+    std::vector<uint8_t> preview_canvas_buffer_;
     std::filesystem::path pending_capture_path_;
     std::string action_status_;
     FocusTarget focus_{FocusTarget::Prompt};
     ScreenMode mode_{ScreenMode::Prompt};
     bool busy_{false};
+    lv_timer_t* preview_refresh_timer_{nullptr};
 };
 
 } // namespace screen

@@ -70,7 +70,7 @@ CaptureResult capture_photo(const std::filesystem::path& output_path) {
     std::filesystem::remove(output_path, remove_error);
 
     const auto command =
-        "rpicam-still --nopreview --immediate --timeout 1 --encoding jpg --quality 95 "
+        "rpicam-still --nopreview --timeout 2s --rotation 180 --encoding jpg --quality 95 "
         "-o " + shell_quote(output_path.string());
 
     const int exit_code = system_exit_code(command);

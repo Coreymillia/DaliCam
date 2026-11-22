@@ -16,14 +16,22 @@
 #include "settings.h"
 #include "theme.h"
 
+#include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <string_view>
 #include <system_error>
+#include <sys/wait.h>
+#include <vector>
 
 namespace screen {
 namespace {
 
 constexpr std::size_t kMaxPromptLength = 512;
+constexpr int kPreviewCanvasWidth = 300;
+constexpr int kPreviewCanvasHeight = 104;
+constexpr std::size_t kPreviewCanvasBufferSize = static_cast<std::size_t>(kPreviewCanvasWidth) *
+                                                 static_cast<std::size_t>(kPreviewCanvasHeight) * 4U;
 
 bool is_printable_key(uint32_t key) {
     return key >= 32 && key <= 126;
@@ -37,6 +45,85 @@ bool is_no_key(uint32_t key) {
     return key == 'n' || key == 'N';
 }
 
+std::string shell_quote(std::string_view value) {
+    std::string quoted;
+    quoted.reserve(value.size() + 2);
+    quoted.push_back('\'');
+    for (const char character : value) {
+        if (character == '\'') {
+            quoted.append("'\\''");
+        }
+        else {
+            quoted.push_back(character);
+        }
+    }
+    quoted.push_back('\'');
+    return quoted;
+}
+
+int system_exit_code(const std::string& command) {
+    const int status = std::system(command.c_str());
+    if (status == -1) {
+        return -1;
+    }
+#if defined(_WIN32)
+    return status;
+#else
+    if (WIFEXITED(status)) {
+        return WEXITSTATUS(status);
+    }
+    if (WIFSIGNALED(status)) {
+        return 128 + WTERMSIG(status);
+    }
+    return status;
+#endif
+}
+
+bool create_canvas_preview(const std::filesystem::path& input,
+                           const std::filesystem::path& output,
+                           int max_width,
+                           int max_height,
+                           std::string& error) {
+    error.clear();
+
+    std::error_code filesystem_error;
+    std::filesystem::create_directories(output.parent_path(), filesystem_error);
+    if (filesystem_error) {
+        error = "Unable to create preview directory: " + filesystem_error.message();
+        return false;
+    }
+
+    const auto command =
+        "python3 -c "
+        "'from PIL import Image, ImageOps; import sys; "
+        "src=sys.argv[1]; dst=sys.argv[2]; max_w=int(sys.argv[3]); max_h=int(sys.argv[4]); "
+        "img=Image.open(src); img=ImageOps.exif_transpose(img).convert(\"RGBA\"); "
+        "resample=Image.Resampling.LANCZOS if hasattr(Image, \"Resampling\") else Image.LANCZOS; "
+        "img.thumbnail((max_w, max_h), resample); "
+        "canvas=Image.new(\"RGBA\", (max_w, max_h), (0, 0, 0, 255)); "
+        "canvas.paste(img, ((max_w - img.width) // 2, (max_h - img.height) // 2)); "
+        "r, g, b, a = canvas.split(); "
+        "bgra = Image.merge(\"RGBA\", (b, g, r, a)); "
+        "open(dst, \"wb\").write(bgra.tobytes())' "
+        + shell_quote(input.string()) +
+        " " + shell_quote(output.string()) +
+        " " + std::to_string(max_width) +
+        " " + std::to_string(max_height);
+
+    const int exit_code = system_exit_code(command);
+    if (exit_code != 0) {
+        error = "Thumbnail generation failed with code " + std::to_string(exit_code);
+        return false;
+    }
+
+    if (!std::filesystem::exists(output, filesystem_error) || filesystem_error) {
+        error = "Thumbnail output was not created";
+        return false;
+    }
+
+    return true;
+}
+
 } // namespace
 
 AppleScreen::AppleScreen(viewmodel::BaseViewModel& view_model,
@@ -48,6 +135,15 @@ AppleScreen::AppleScreen(viewmodel::BaseViewModel& view_model,
       paths_(paths),
       prompt_buffer_() {
     init();
+    refresh_latest_preview_from_storage();
+    preview_refresh_timer_ = lv_timer_create(preview_refresh_timer_cb, 2000, this);
+}
+
+AppleScreen::~AppleScreen() {
+    if (preview_refresh_timer_) {
+        lv_timer_delete(preview_refresh_timer_);
+        preview_refresh_timer_ = nullptr;
+    }
 }
 
 void AppleScreen::build_content(lv_obj_t* content) {
@@ -62,7 +158,8 @@ void AppleScreen::build_content(lv_obj_t* content) {
 
     preview_card_ = lv_obj_create(panel);
     lv_obj_remove_style_all(preview_card_);
-    lv_obj_set_size(preview_card_, LV_PCT(100), LV_PCT(100));
+    lv_obj_set_width(preview_card_, LV_PCT(100));
+    lv_obj_set_height(preview_card_, kPreviewCanvasHeight);
     lv_obj_clear_flag(preview_card_, LV_OBJ_FLAG_SCROLLABLE);
     reactive::bind_theme(preview_card_, view_model().dark_mode_subject(), reactive::ThemeRole::Surface);
     lv_obj_set_style_radius(preview_card_, 8, 0);
@@ -71,7 +168,7 @@ void AppleScreen::build_content(lv_obj_t* content) {
     lv_obj_set_style_border_opa(preview_card_, LV_OPA_COVER, 0);
 
     preview_hint_label_ = lv_label_create(preview_card_);
-    lv_label_set_text(preview_hint_label_, "Generate an image to see it here.");
+    lv_label_set_text(preview_hint_label_, "Latest photo will appear here.");
     lv_obj_set_width(preview_hint_label_, LV_PCT(100));
     lv_label_set_long_mode(preview_hint_label_, LV_LABEL_LONG_WRAP);
     auto* hint_font = assets().load_standard_font(10, app::StandardFontWeight::Regular);
@@ -79,10 +176,15 @@ void AppleScreen::build_content(lv_obj_t* content) {
     reactive::bind_theme(preview_hint_label_, view_model().dark_mode_subject(), reactive::ThemeRole::Text);
     lv_obj_center(preview_hint_label_);
 
-    preview_image_ = lv_image_create(preview_card_);
-    lv_obj_set_size(preview_image_, LV_PCT(100), LV_PCT(100));
-    lv_obj_set_pos(preview_image_, 0, 0);
-    lv_image_set_inner_align(preview_image_, LV_IMAGE_ALIGN_STRETCH);
+    preview_canvas_buffer_.assign(kPreviewCanvasBufferSize, 0);
+    preview_image_ = lv_canvas_create(preview_card_);
+    lv_obj_set_size(preview_image_, kPreviewCanvasWidth, kPreviewCanvasHeight);
+    lv_canvas_set_buffer(preview_image_,
+                         preview_canvas_buffer_.data(),
+                         kPreviewCanvasWidth,
+                         kPreviewCanvasHeight,
+                         LV_COLOR_FORMAT_ARGB8888);
+    lv_canvas_fill_bg(preview_image_, lv_color_black(), LV_OPA_COVER);
     lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
 
     confirm_label_ = lv_label_create(panel);
@@ -451,8 +553,26 @@ void AppleScreen::clear_prompt() {
 
 void AppleScreen::show_prompt_mode() {
     mode_ = ScreenMode::Prompt;
+    refresh_latest_preview_from_storage();
     if (preview_card_) {
-        lv_obj_add_flag(preview_card_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_set_size(preview_card_, LV_PCT(100), kPreviewCanvasHeight);
+        lv_obj_remove_flag(preview_card_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (preview_image_) {
+        if (preview_path_.empty()) {
+            lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
+        }
+        else {
+            lv_obj_remove_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (preview_hint_label_) {
+        if (preview_path_.empty()) {
+            lv_obj_remove_flag(preview_hint_label_, LV_OBJ_FLAG_HIDDEN);
+        }
+        else {
+            lv_obj_add_flag(preview_hint_label_, LV_OBJ_FLAG_HIDDEN);
+        }
     }
     if (prompt_card_) {
         lv_obj_remove_flag(prompt_card_, LV_OBJ_FLAG_HIDDEN);
@@ -480,6 +600,8 @@ void AppleScreen::show_prompt_mode() {
 void AppleScreen::show_preview_mode() {
     mode_ = ScreenMode::Preview;
     if (preview_card_) {
+        lv_obj_set_size(preview_card_, LV_PCT(100), kPreviewCanvasHeight);
+        lv_obj_clear_flag(preview_card_, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_remove_flag(preview_card_, LV_OBJ_FLAG_HIDDEN);
     }
     if (prompt_card_) {
@@ -507,6 +629,8 @@ void AppleScreen::show_preview_mode() {
 void AppleScreen::show_capture_confirm_mode() {
     mode_ = ScreenMode::CaptureConfirm;
     if (preview_card_) {
+        lv_obj_set_size(preview_card_, LV_PCT(100), kPreviewCanvasHeight);
+        lv_obj_clear_flag(preview_card_, LV_OBJ_FLAG_SCROLLABLE);
         lv_obj_remove_flag(preview_card_, LV_OBJ_FLAG_HIDDEN);
     }
     if (prompt_card_) {
@@ -637,13 +761,125 @@ void AppleScreen::prompt_button_cb(lv_event_t* event) {
     screen->show_prompt_mode();
 }
 
+void AppleScreen::preview_refresh_timer_cb(lv_timer_t* timer) {
+    auto* screen = static_cast<AppleScreen*>(lv_timer_get_user_data(timer));
+    if (!screen) {
+        return;
+    }
+    screen->refresh_latest_preview_from_storage();
+}
+
+void AppleScreen::refresh_latest_preview_from_storage() {
+    if (mode_ != ScreenMode::Prompt) {
+        return;
+    }
+
+    std::optional<std::filesystem::path> latest_path;
+    std::filesystem::file_time_type latest_time{};
+    bool have_latest = false;
+
+    const auto consider_directory = [&](const std::filesystem::path& directory) {
+        std::error_code directory_error;
+        if (!std::filesystem::exists(directory, directory_error) || directory_error) {
+            return;
+        }
+
+        for (const auto& entry : std::filesystem::directory_iterator(directory, directory_error)) {
+            if (directory_error) {
+                return;
+            }
+            std::error_code entry_error;
+            if (!entry.is_regular_file(entry_error) || entry_error) {
+                continue;
+            }
+
+            const auto extension = entry.path().extension().string();
+            if (extension != ".jpg" && extension != ".jpeg" && extension != ".png") {
+                continue;
+            }
+
+            const auto write_time = entry.last_write_time(entry_error);
+            if (entry_error) {
+                continue;
+            }
+
+            if (!have_latest || write_time > latest_time) {
+                latest_time = write_time;
+                latest_path = entry.path();
+                have_latest = true;
+            }
+        }
+    };
+
+    consider_directory(paths_.camera_dir());
+    consider_directory(paths_.generated_dir());
+    consider_directory(paths_.uploads_dir());
+
+    if (latest_path && latest_path->string() != preview_path_) {
+        set_preview_image(*latest_path);
+        return;
+    }
+
+    if (!latest_path && preview_image_ && preview_hint_label_) {
+        preview_path_.clear();
+        lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_remove_flag(preview_hint_label_, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 void AppleScreen::set_preview_image(const std::filesystem::path& image_path) {
     preview_path_ = image_path.string();
-    preview_lvgl_path_ = to_lvgl_path(image_path);
+
+    const auto preview_file = paths_.temp_dir() / "latest-preview.raw";
+    std::string preview_error;
+    if (!create_canvas_preview(image_path, preview_file, kPreviewCanvasWidth, kPreviewCanvasHeight, preview_error)) {
+        LOG_WARN("preview generation failed for {}: {}", image_path.string(), preview_error);
+        preview_path_.clear();
+        if (preview_image_) {
+            lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (preview_hint_label_) {
+            lv_obj_remove_flag(preview_hint_label_, LV_OBJ_FLAG_HIDDEN);
+        }
+        return;
+    }
+
+    preview_canvas_buffer_.assign(kPreviewCanvasBufferSize, 0);
+    std::ifstream raw_file(preview_file, std::ios::binary);
+    if (!raw_file) {
+        LOG_WARN("unable to open preview buffer {}", preview_file.string());
+        preview_path_.clear();
+        if (preview_image_) {
+            lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (preview_hint_label_) {
+            lv_obj_remove_flag(preview_hint_label_, LV_OBJ_FLAG_HIDDEN);
+        }
+        return;
+    }
+
+    raw_file.read(reinterpret_cast<char*>(preview_canvas_buffer_.data()),
+                  static_cast<std::streamsize>(preview_canvas_buffer_.size()));
+    if (raw_file.gcount() != static_cast<std::streamsize>(preview_canvas_buffer_.size())) {
+        LOG_WARN("preview buffer size mismatch for {}", preview_file.string());
+        preview_path_.clear();
+        if (preview_image_) {
+            lv_obj_add_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (preview_hint_label_) {
+            lv_obj_remove_flag(preview_hint_label_, LV_OBJ_FLAG_HIDDEN);
+        }
+        return;
+    }
+
     if (preview_image_) {
-        lv_image_set_src(preview_image_, preview_lvgl_path_.c_str());
-        lv_image_set_inner_align(preview_image_, LV_IMAGE_ALIGN_STRETCH);
+        lv_canvas_set_buffer(preview_image_,
+                             preview_canvas_buffer_.data(),
+                             kPreviewCanvasWidth,
+                             kPreviewCanvasHeight,
+                             LV_COLOR_FORMAT_ARGB8888);
         lv_obj_remove_flag(preview_image_, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_invalidate(preview_image_);
     }
     if (preview_hint_label_) {
         lv_obj_add_flag(preview_hint_label_, LV_OBJ_FLAG_HIDDEN);

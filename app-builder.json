@@ -18,10 +18,10 @@
     "author": { "github": "coreymillia", "display_name": "Corey Millia" },
     "share_code": "DALICAM-S0",
     "permissions": {
-      "camera": false,
+      "camera": true,
       "microphone": false,
       "imu": false,
-      "network": false,
+      "network": true,
       "additional_hardware": false,
       "background_service": false,
       "external_display": false

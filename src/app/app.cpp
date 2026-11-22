@@ -17,6 +17,7 @@
 #include "screen_manager.h"
 #include "settings.h"
 #include "storage.h"
+#include "webui_server.h"
 #include "base_viewmodel.h"
 #include "theme.h"
 #include "toast.h"
@@ -377,6 +378,18 @@ int Application::run() {
 
     ScreenManager screen_manager(view_model, assets, runtime_settings, runtime_paths);
     screen_manager.start();
+
+    platform::webui::ImageViewerServer web_ui_server(runtime_paths.camera_dir(),
+                                                     runtime_paths.generated_dir(),
+                                                     runtime_paths.uploads_dir(),
+                                                     runtime_paths.settings_file());
+    std::string web_ui_error;
+    if (web_ui_server.start(web_ui_error)) {
+        LOG_INFO("web ui available at http://0.0.0.0:{}", web_ui_server.port());
+    } else {
+        LOG_WARN("web ui disabled: {}", web_ui_error);
+    }
+
     ShortcutController shortcuts(view_model, screen_manager, assets);
 
     DarkModePersistence dark_mode_persistence{user_config_path, view_model.is_dark_mode()};
