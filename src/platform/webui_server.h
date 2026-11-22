@@ -71,6 +71,8 @@ private:
     struct Route {
         Source source;
         bool raw{false};
+        bool download{false};
+        bool delete_request{false};
         std::optional<std::string> filename;
     };
 
@@ -96,7 +98,8 @@ private:
     static bool send_file(int client_fd,
                           const std::filesystem::path& path,
                           std::string_view content_type,
-                          std::string& error);
+                          std::string& error,
+                          std::string_view extra_headers = {});
     static std::string html_escape(std::string_view text);
     static std::string content_type_for_path(const std::filesystem::path& path);
     static bool read_jpeg_dimensions(const std::filesystem::path& path,
@@ -114,7 +117,8 @@ private:
                                     const std::optional<LatestImage>& latest,
                                     std::optional<std::string> message) const;
     std::string build_page(Source source,
-                           std::optional<std::string> selected_filename) const;
+                           std::optional<std::string> selected_filename,
+                           std::optional<std::string> message = std::nullopt) const;
 
     std::filesystem::path camera_dir_;
     std::filesystem::path generated_dir_;

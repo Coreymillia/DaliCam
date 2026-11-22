@@ -462,7 +462,7 @@ void AppleScreen::build_content(lv_obj_t* content) {
     reactive::bind_theme(gallery_info_label_, view_model().dark_mode_subject(), reactive::ThemeRole::Text);
 
     gallery_nav_label_ = lv_label_create(gallery_card_);
-    lv_label_set_text(gallery_nav_label_, "F = up   X = down   Enter = select   Esc = back");
+    lv_label_set_text(gallery_nav_label_, "F = up   X = down   Enter = select   D = delete   Esc = back");
     lv_obj_set_width(gallery_nav_label_, LV_PCT(100));
     lv_label_set_long_mode(gallery_nav_label_, LV_LABEL_LONG_WRAP);
     auto* gallery_nav_font = assets().load_standard_font(8, app::StandardFontWeight::Regular);
@@ -492,6 +492,13 @@ bool AppleScreen::handle_key(uint32_t key, bool long_pressed) {
 
             if (key == 'x' || key == 'X' || key == LV_KEY_DOWN) {
                 step_gallery_selection(1);
+                return true;
+            }
+
+            if (key == 'd' || key == 'D') {
+                pending_confirm_source_path_ = gallery_items_[gallery_selected_index_].path;
+                confirm_action_ = ConfirmAction::DeleteGalleryImage;
+                show_capture_confirm_mode();
                 return true;
             }
 
@@ -528,10 +535,39 @@ bool AppleScreen::handle_key(uint32_t key, bool long_pressed) {
                 }
                 return generate_image(pending_capture_path_);
             }
+
+            if (confirm_action_ == ConfirmAction::DeleteGalleryImage) {
+                if (pending_confirm_source_path_.empty()) {
+                    action_status_ = "No image selected";
+                    refresh_status_display();
+                    open_gallery(gallery_kind_);
+                    return true;
+                }
+
+                std::error_code delete_error;
+                const bool removed = std::filesystem::remove(pending_confirm_source_path_, delete_error);
+                if (!removed || delete_error) {
+                    LOG_WARN("failed to delete gallery image {}: {}",
+                             pending_confirm_source_path_.string(),
+                             delete_error ? delete_error.message() : "file was not removed");
+                }
+                if (!selected_source_path_.empty() && selected_source_path_ == pending_confirm_source_path_) {
+                    selected_source_path_.clear();
+                }
+                if (!preview_path_.empty() && preview_path_ == pending_confirm_source_path_.string()) {
+                    preview_path_.clear();
+                }
+                pending_confirm_source_path_.clear();
+                confirm_action_ = ConfirmAction::None;
+                action_status_.clear();
+                open_gallery(gallery_kind_);
+                return true;
+            }
         }
 
         if (is_no_key(key) || key == LV_KEY_ESC) {
-            if (confirm_action_ == ConfirmAction::Capture && !pending_capture_path_.empty()) {
+            const auto action = confirm_action_;
+            if (action == ConfirmAction::Capture && !pending_capture_path_.empty()) {
                 std::error_code delete_error;
                 std::filesystem::remove(pending_capture_path_, delete_error);
                 if (delete_error) {
@@ -548,6 +584,10 @@ bool AppleScreen::handle_key(uint32_t key, bool long_pressed) {
             confirm_action_ = ConfirmAction::None;
             action_status_.clear();
             refresh_status_display();
+            if (action == ConfirmAction::DeleteGalleryImage) {
+                open_gallery(gallery_kind_);
+                return true;
+            }
             show_prompt_mode();
             return true;
         }
@@ -988,6 +1028,9 @@ void AppleScreen::show_capture_confirm_mode() {
         }
         else if (confirm_action_ == ConfirmAction::Capture) {
             label_text = "Use captured photo? Y / N";
+        }
+        else if (confirm_action_ == ConfirmAction::DeleteGalleryImage) {
+            label_text = "Delete selected image? Y / N";
         }
         lv_label_set_text(confirm_label_, label_text);
         lv_obj_remove_flag(confirm_label_, LV_OBJ_FLAG_HIDDEN);

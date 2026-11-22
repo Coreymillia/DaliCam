@@ -6,6 +6,7 @@
 
 #include "webui_server.h"
 
+#include "camera_capture.h"
 #include "../app/gemini_client.h"
 #include "../app/prompt_presets.h"
 #include "../app/settings.h"
@@ -221,6 +222,20 @@ std::string format_time_label(std::filesystem::file_time_type time_point) {
     char buffer[32]{};
     std::strftime(buffer, sizeof(buffer), "%H:%M:%S", &local_time);
     return buffer;
+}
+
+std::string url_encode(std::string_view value) {
+    std::ostringstream out;
+    out << std::hex << std::uppercase;
+    for (unsigned char ch : value) {
+        if (std::isalnum(ch) || ch == '-' || ch == '_' || ch == '.' || ch == '~') {
+            out << static_cast<char>(ch);
+        }
+        else {
+            out << '%' << std::setw(2) << std::setfill('0') << static_cast<int>(ch);
+        }
+    }
+    return out.str();
 }
 
 bool string_ends_with(std::string_view value, std::string_view suffix) {
@@ -542,10 +557,36 @@ bool ImageViewerServer::handle_client(int client_fd) const {
         return send_text(client_fd, 400, "Bad Request", "text/html; charset=utf-8", body);
     }
 
+    const auto query_pos = request.path.find('?');
     const std::string path = strip_query(request.path);
+    const auto query_fields = query_pos == std::string::npos
+                                  ? std::unordered_map<std::string, std::string>{}
+                                  : parse_urlencoded_form(std::string_view(request.path).substr(query_pos + 1));
+
     if (request.method == "GET" && (path == "/" || path == "/settings")) {
         const auto settings = load_settings_snapshot();
-        const auto body = build_settings_page(settings, latest_image_any(), std::nullopt);
+        std::optional<LatestImage> current = latest_image_any();
+        if (const auto source_it = query_fields.find("source"); source_it != query_fields.end()) {
+            if (const auto filename_it = query_fields.find("file"); filename_it != query_fields.end() && !filename_it->second.empty()) {
+                std::optional<Source> source;
+                const auto lowered_source = lowercase(source_it->second);
+                if (lowered_source == "camera") {
+                    source = Source::Camera;
+                }
+                else if (lowered_source == "generated") {
+                    source = Source::Generated;
+                }
+                else if (lowered_source == "uploads") {
+                    source = Source::Uploads;
+                }
+                if (source) {
+                    if (const auto image = image_by_name(*source, filename_it->second)) {
+                        current = LatestImage{*source, *image};
+                    }
+                }
+            }
+        }
+        const auto body = build_settings_page(settings, current, std::nullopt);
         return send_text(client_fd, 200, "OK", "text/html; charset=utf-8", body);
     }
 
@@ -584,6 +625,36 @@ bool ImageViewerServer::handle_client(int client_fd) const {
                                               latest_image_any(),
                                               message_box("Upload saved",
                                                           "The image was stored and should appear in the preview shortly.",
+                                                          true));
+        return send_text(client_fd, 200, "OK", "text/html; charset=utf-8", body);
+    }
+
+    if (request.method == "POST" && path == "/capture") {
+        app::Settings settings = load_settings_snapshot();
+        std::error_code filesystem_error;
+        std::filesystem::create_directories(camera_dir_, filesystem_error);
+        if (filesystem_error) {
+            const auto body = build_settings_page(settings,
+                                                  latest_image_any(),
+                                                  message_box("Capture failed", filesystem_error.message(), false));
+            return send_text(client_fd, 500, "Internal Server Error", "text/html; charset=utf-8", body);
+        }
+
+        const auto capture_path = camera_dir_ / unique_upload_name("capture", ".jpg");
+        const auto result = platform::camera::capture_photo(capture_path);
+        if (!result.success) {
+            const auto body = build_settings_page(settings,
+                                                  latest_image_any(),
+                                                  message_box("Capture failed",
+                                                              result.error.empty() ? "The camera could not capture a photo." : result.error,
+                                                              false));
+            return send_text(client_fd, 500, "Internal Server Error", "text/html; charset=utf-8", body);
+        }
+
+        const auto body = build_settings_page(settings,
+                                              latest_image_any(),
+                                              message_box("Photo captured",
+                                                          "The new photo was saved and should appear in the gallery shortly.",
                                                           true));
         return send_text(client_fd, 200, "OK", "text/html; charset=utf-8", body);
     }
@@ -721,7 +792,7 @@ bool ImageViewerServer::handle_client(int client_fd) const {
         return send_text(client_fd, 404, "Not Found", "text/html; charset=utf-8", body);
     }
 
-    if (route->raw) {
+    if (route->raw || route->download) {
         const auto image = route->filename ? image_by_name(route->source, *route->filename)
                                            : latest_image(route->source);
         if (!image) {
@@ -730,7 +801,44 @@ bool ImageViewerServer::handle_client(int client_fd) const {
         }
 
         std::string file_error;
+        if (route->download) {
+            const auto headers = std::string("Content-Disposition: attachment; filename=\"") + image->filename + "\"\r\n";
+            return send_file(client_fd, image->path, content_type_for_path(image->path), file_error, headers);
+        }
         return send_file(client_fd, image->path, content_type_for_path(image->path), file_error);
+    }
+
+    if (route->delete_request) {
+        if (request.method != "POST") {
+            const auto body = make_error_page(405, "Method Not Allowed", "Delete requires a POST request.");
+            return send_text(client_fd, 405, "Method Not Allowed", "text/html; charset=utf-8", body);
+        }
+
+        const auto image = route->filename ? image_by_name(route->source, *route->filename) : std::optional<ImageInfo>{};
+        if (!image) {
+            const auto body = build_page(route->source,
+                                         std::nullopt,
+                                         message_box("Delete failed", "No matching image was found.", false));
+            return send_text(client_fd, 404, "Not Found", "text/html; charset=utf-8", body);
+        }
+
+        std::error_code remove_error;
+        const auto removed = std::filesystem::remove(image->path, remove_error);
+        if (!removed || remove_error) {
+            const auto body = build_page(route->source,
+                                         std::nullopt,
+                                         message_box("Delete failed",
+                                                     remove_error ? remove_error.message() : "The file could not be deleted.",
+                                                     false));
+            return send_text(client_fd, 500, "Internal Server Error", "text/html; charset=utf-8", body);
+        }
+
+        const auto body = build_page(route->source,
+                                     std::nullopt,
+                                     message_box("Image deleted",
+                                                 "The image was removed from storage.",
+                                                 true));
+        return send_text(client_fd, 200, "OK", "text/html; charset=utf-8", body);
     }
 
     const auto body = build_page(route->source, route->filename);
@@ -898,22 +1006,32 @@ std::string ImageViewerServer::strip_query(std::string path) {
 }
 
 std::optional<ImageViewerServer::Route> ImageViewerServer::parse_route(std::string_view path) {
-    const auto make_route = [&](Source source, bool raw, std::optional<std::string> filename = std::nullopt) {
-        return Route{source, raw, std::move(filename)};
+    const auto make_route = [&](Source source,
+                                bool raw,
+                                bool download,
+                                bool delete_request,
+                                std::optional<std::string> filename = std::nullopt) {
+        return Route{source, raw, download, delete_request, std::move(filename)};
     };
 
     const auto match_prefix = [&](std::string_view prefix, Source source) -> std::optional<Route> {
         if (path == prefix) {
-            return make_route(source, false);
+            return make_route(source, false, false, false);
         }
         if (path == std::string(prefix) + "/raw") {
-            return make_route(source, true);
+            return make_route(source, true, false, false);
         }
         if (path.rfind(std::string(prefix) + "/raw/", 0) == 0) {
-            return make_route(source, true, std::string(path.substr(prefix.size() + 5)));
+            return make_route(source, true, false, false, std::string(path.substr(prefix.size() + 5)));
+        }
+        if (path.rfind(std::string(prefix) + "/download/", 0) == 0) {
+            return make_route(source, false, true, false, std::string(path.substr(prefix.size() + 10)));
+        }
+        if (path.rfind(std::string(prefix) + "/delete/", 0) == 0) {
+            return make_route(source, false, false, true, std::string(path.substr(prefix.size() + 8)));
         }
         if (path.rfind(std::string(prefix) + "/", 0) == 0) {
-            return make_route(source, false, std::string(path.substr(prefix.size() + 1)));
+            return make_route(source, false, false, false, std::string(path.substr(prefix.size() + 1)));
         }
         return std::nullopt;
     };
@@ -954,7 +1072,8 @@ bool ImageViewerServer::send_text(int client_fd,
 bool ImageViewerServer::send_file(int client_fd,
                                   const std::filesystem::path& path,
                                   std::string_view content_type,
-                                  std::string& error) {
+                                  std::string& error,
+                                  std::string_view extra_headers) {
     error.clear();
 
     std::error_code filesystem_error;
@@ -970,7 +1089,14 @@ bool ImageViewerServer::send_file(int client_fd,
            << "Content-Length: " << size << "\r\n"
            << "Cache-Control: no-store, no-cache, must-revalidate, max-age=0\r\n"
            << "Pragma: no-cache\r\n"
-           << "Connection: close\r\n\r\n";
+           << "Connection: close\r\n";
+    if (!extra_headers.empty()) {
+        header << extra_headers;
+        if (extra_headers.back() != '\n') {
+            header << "\r\n";
+        }
+    }
+    header << "\r\n";
     const auto header_text = header.str();
     if (!socket_send_all(client_fd, header_text)) {
         error = "failed to send file header";
@@ -1207,6 +1333,7 @@ std::string ImageViewerServer::build_settings_page(const app::Settings& settings
          << ".actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;}"
          << "button,a.button{border:none;border-radius:8px;padding:10px 14px;font:inherit;text-decoration:none;display:inline-block;}"
          << "button{background:#2d7dff;color:#fff;cursor:pointer;}"
+         << "button.danger{background:#cc4b4b;}"
          << "a.button{background:#2a2a2a;color:#fff;}"
          << ".message{padding:12px 14px;border-radius:10px;border:1px solid transparent;}"
          << ".message.ok{background:#112414;border-color:#2f6d3a;}"
@@ -1293,8 +1420,18 @@ std::string ImageViewerServer::build_settings_page(const app::Settings& settings
          << "<span id=\"generate-status\" class=\"generate-status\"></span>"
          << "</div></form>"
          << "<div class=\"small\" style=\"margin-top:10px\">The latest image above will be used as the source when available. Leave the prompt empty to use the preset only.</div>"
+         << "<div style=\"margin-top:12px\">"
+         << "<form id=\"capture-form\" method=\"post\" action=\"/capture\">"
+         << "<button id=\"capture-button\" type=\"submit\" class=\"danger\">Remote capture</button>"
+         << "<span id=\"capture-status\" class=\"generate-status\" style=\"margin-left:10px\"></span>"
+         << "</form>"
+         << "<div class=\"small\" style=\"margin-top:10px\">Take a photo without touching the device.</div>"
+         << "</div>"
          << "<script>"
          << "(function(){const form=document.getElementById('generate-form');const prompt=document.getElementById('generate-prompt');const button=document.getElementById('generate-button');const status=document.getElementById('generate-status');if(!form||!prompt||!button||!status){return;}form.addEventListener('submit',async function(event){event.preventDefault();const hasImage=form.dataset.hasImage==='yes';const text=(prompt.value||'').trim();const confirmText=hasImage?(text?'Generate from the latest image with this prompt?':'Generate from the latest image using the preset only?'):(text?'Generate a new image with this prompt?':'Generate a new image using the preset only?');if(!window.confirm(confirmText)){return;}button.disabled=true;status.textContent='Generating…';try{const body=new URLSearchParams(new FormData(form));const response=await fetch(form.action,{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body});const html=await response.text();document.open();document.write(html);document.close();}catch(error){button.disabled=false;status.textContent='Generation failed.';}});})();"
+         << "</script>"
+         << "<script>"
+         << "(function(){const form=document.getElementById('capture-form');const button=document.getElementById('capture-button');const status=document.getElementById('capture-status');if(!form||!button||!status){return;}form.addEventListener('submit',async function(event){event.preventDefault();if(!window.confirm('Capture a new photo now?')){return;}button.disabled=true;status.textContent='Capturing…';try{const response=await fetch(form.action,{method:'POST'});const html=await response.text();document.open();document.write(html);document.close();}catch(error){button.disabled=false;status.textContent='Capture failed.';}});})();"
          << "</script>"
          << "</div>"
          << "</div>";
@@ -1339,7 +1476,9 @@ std::string ImageViewerServer::build_settings_page(const app::Settings& settings
     return html.str();
 }
 
-std::string ImageViewerServer::build_page(Source source, std::optional<std::string> selected_filename) const {
+std::string ImageViewerServer::build_page(Source source,
+                                           std::optional<std::string> selected_filename,
+                                           std::optional<std::string> message) const {
     const auto title = source_label(source);
     const auto images = list_images(source);
     std::optional<ImageInfo> selected_image;
@@ -1386,11 +1525,16 @@ std::string ImageViewerServer::build_page(Source source, std::optional<std::stri
          << ".preview{display:grid;gap:12px;}"
          << ".preview img{display:block;width:100%;max-width:100%;max-height:56vh;object-fit:contain;background:#000;border-radius:8px;}"
          << ".thumb-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:10px;}"
-         << ".thumb{display:grid;gap:8px;background:#101010;border:1px solid #333;border-radius:10px;padding:10px;text-decoration:none;color:#eee;}"
+         << ".thumb{display:grid;gap:8px;background:#101010;border:1px solid #333;border-radius:10px;padding:10px;color:#eee;}"
          << ".thumb:hover{border-color:#5a8cff;}"
          << ".thumb img{display:block;width:100%;height:140px;object-fit:cover;background:#000;border-radius:8px;}"
          << ".thumb-meta{font-size:0.88rem;color:#ddd;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}"
          << ".thumb-sub{font-size:0.8rem;color:#aaa;}"
+         << ".thumb-actions{display:flex;flex-wrap:wrap;gap:8px;}"
+         << ".thumb-actions form{margin:0;display:inline-block;}"
+         << ".thumb-actions a,.thumb-actions button{padding:8px 10px;border-radius:8px;border:none;font:inherit;text-decoration:none;cursor:pointer;}"
+         << ".thumb-actions a{background:#2a2a2a;color:#fff;display:inline-block;}"
+         << ".thumb-actions button{background:#cc4b4b;color:#fff;}"
          << ".day-group{border:1px solid #2a2a2a;border-radius:10px;padding:10px;background:#141414;}"
          << ".section-title{display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:10px;}"
          << ".small{color:#bbb;font-size:0.92rem;}"
@@ -1418,6 +1562,10 @@ std::string ImageViewerServer::build_page(Source source, std::optional<std::stri
          << "<a href=\"/uploads\">Uploads</a>"
          << "</div></header>"
          << "<div class=\"shell\">";
+
+    if (message) {
+        html << *message;
+    }
 
     if (selected_image) {
         const auto selected_raw = raw_base + "/" + selected_image->filename;
@@ -1452,14 +1600,26 @@ std::string ImageViewerServer::build_page(Source source, std::optional<std::stri
                  << "<summary>" << escape_html(day) << " <span class=\"small\">(" << entries.size() << ")</span></summary>"
                  << "<div class=\"thumb-grid\">";
             for (const auto* entry : entries) {
-                const auto selected_link = gallery_base + "/" + entry->filename;
-                const auto thumb_raw = raw_base + "/" + entry->filename;
-                html << "<a class=\"thumb\" href=\"" << selected_link << "\">"
+                const std::string select_link = std::string("/settings?source=") +
+                                                url_encode(source == Source::Camera ? "camera"
+                                                           : source == Source::Generated ? "generated"
+                                                                                         : "uploads") +
+                                                "&file=" + url_encode(entry->filename);
+                const std::string download_link = gallery_base + "/download/" + entry->filename;
+                const std::string delete_link = gallery_base + "/delete/" + entry->filename;
+                const std::string thumb_raw = raw_base + "/" + entry->filename;
+                html << "<div class=\"thumb\">"
                      << "<img loading=\"lazy\" src=\"" << thumb_raw << "?t=" << cache_buster << "\" alt=\"" << escape_html(entry->filename) << "\">"
                      << "<span class=\"thumb-meta\">" << escape_html(entry->filename) << "</span>"
                      << "<span class=\"thumb-sub\">" << escape_html(format_time_label(entry->modified_at)) << " • "
                      << escape_html(format_bytes(entry->size_bytes)) << "</span>"
-                     << "</a>";
+                     << "<div class=\"thumb-actions\">"
+                     << "<a href=\"" << select_link << "\">Select for editing</a>"
+                     << "<a href=\"" << download_link << "\">Download</a>"
+                     << "<form method=\"post\" action=\"" << delete_link << "\" onsubmit=\"return confirm('Delete this image?');\">"
+                     << "<button type=\"submit\">Delete</button>"
+                     << "</form>"
+                     << "</div></div>";
             }
             html << "</div></details>";
         }

@@ -55,6 +55,7 @@ private:
         None,
         Capture,
         GenerateFromSelection,
+        DeleteGalleryImage,
     };
 
     struct GalleryItem {

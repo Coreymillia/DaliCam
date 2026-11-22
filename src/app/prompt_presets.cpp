@@ -13,12 +13,30 @@
 namespace app {
 namespace {
 
-const std::array<PromptPreset, 2> kPresets{{
+const std::array<PromptPreset, 5> kPresets{{
     {
         "dali-dream",
         "Dali Dream",
         R"PROMPT(Apply a bold surrealist treatment with dreamlike symbolism, warped perspective, impossible spatial logic, elongated forms, melting details, painterly texture, and dramatic cinematic lighting. Keep the subject recognizable while pushing it into a strange, imaginative dream world.)PROMPT",
         R"PROMPT(Transform the image into a surreal dreamscape with melting forms, symbolic details, and painterly surrealist atmosphere while preserving the core subject.)PROMPT",
+    },
+    {
+        "van-gogh",
+        "Van Gogh",
+        R"PROMPT(Restyle the photo with a dramatic post-impressionist oil painting treatment inspired by expressive brushwork, swirling motion, luminous moonlit color energy, vivid cobalt and golden tones, textured paint buildup, and emotionally charged lighting. Preserve the original subject and composition while translating it into a richly painted scene.)PROMPT",
+        R"PROMPT(Transform the image into a vivid post-impressionist oil painting with swirling brushwork, bold texture, glowing night-sky color energy, and expressive painterly motion while keeping the subject recognizable.)PROMPT",
+    },
+    {
+        "picasso",
+        "Picasso",
+        R"PROMPT(Reimagine the photo as a bold cubist painting with fractured planes, geometric simplification, angular forms, flattened perspective, and a confident modernist palette. Preserve the core subject and main composition, but break the scene into stylized overlapping shapes and strong painterly structure.)PROMPT",
+        R"PROMPT(Turn the image into a striking cubist artwork with geometric planes, abstracted facial or object structure, flattened depth, and expressive modernist color.)PROMPT",
+    },
+    {
+        "alex-grey",
+        "Alex Grey",
+        R"PROMPT(Transform the image into a visionary sacred-geometric artwork inspired by Alex Grey. Reshape the subject into highly structured sacred geometry rather than simply overlaying lines: use flower-of-life patterns, mandala-like symmetry, nested polygons, interlocking circles, radiant fractal forms, and precise luminous geometry that appears to reconstruct the scene. Keep the original image recognizable beneath the transformation, but make the geometry dominant, intricate, and visually distinct, as if the subject has been cut apart and remade into a spiritual geometric structure. Add layered patterns, translucent energy fields, and occasionally integrate a mysterious human figure, symbolic object, or spiritual presence blending into the sacred design. The result should feel visionary, anatomical, and metaphysical, with crisp geometry, luminous depth, and a strong sense of sacred order.)PROMPT",
+        R"PROMPT(Transform the image into a sacred-geometric visionary artwork with flower-of-life patterns, mandala symmetry, layered luminous geometry, and integrated mystical forms while preserving the recognizable subject beneath the structure.)PROMPT",
     },
     {
         "vector-sheet",
@@ -50,7 +68,7 @@ std::string trim(std::string value) {
 
 } // namespace
 
-const std::array<PromptPreset, 2>& prompt_presets() {
+const std::array<PromptPreset, 5>& prompt_presets() {
     return kPresets;
 }
 
