@@ -2,19 +2,22 @@
   "app_name": "DaliCam",
   "package_name": "dalicam",
   "version": "0.1.0",
-  "description": "CardputerZero image workflow app for capturing, browsing, uploading, and generating images with Gemini models",
+  "description": "CardputerZero image workflow app for capturing, browsing, uploading, and generating images with Gemini and OpenAI models",
 
   "store": {
     "summary": "Device-first image capture, gallery, and generation app for CardputerZero",
-    "description": "DaliCam is a device-first CardputerZero app for capturing photos, uploading test images, browsing galleries, and generating new images with Gemini-based image models. It includes an on-device prompt workflow, a browser-based WebUI on port 8080, remote capture, day-grouped galleries, and per-image management tools for testing and everyday use.",
+    "description": "DaliCam is a device-first CardputerZero app for capturing photos, uploading test images, browsing galleries, and generating new images with Gemini and OpenAI image models. It includes an on-device prompt workflow, a browser-based WebUI on port 8080, remote capture, day-grouped galleries, per-image management tools, and a custom preset workflow for testing and everyday use.",
     "categories": ["Utilities"],
     "screenshots": [
-      "screenshot/app-simulator-dark-darwin.png",
-      "screenshot/app-simulator-light-darwin.png"
+      "screenshot/dalicam-main-screen.png",
+      "screenshot/dalicam-ai-gallery.png",
+      "screenshot/dalicam-device-settings.png",
+      "screenshot/dalicam-webui-gallery.png",
+      "screenshot/dalicam-webui-settings.png"
     ],
     "icon": "assets/images/dalicam.png",
     "license": "MIT",
-    "source_repo": "https://github.com/coreymillia/DaliCam",
+    "source_repo": "https://github.com/Coreymillia/DaliCam",
     "author": { "github": "coreymillia", "display_name": "Corey Millia" },
     "share_code": "DLCM",
     "permissions": {

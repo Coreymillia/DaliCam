@@ -1,6 +1,6 @@
 # DaliCam
 
-DaliCam is a CardputerZero image workflow app for capturing photos, uploading test images, browsing galleries, and generating new images with Gemini-based image models.
+DaliCam is a CardputerZero image workflow app for capturing photos, uploading test images, browsing galleries, and generating new images with Gemini and OpenAI image models.
 
 It is designed to run **stand-alone on the device first**, with a WebUI companion on port `8080` for settings, gallery browsing, uploads, and remote capture.
 
@@ -11,8 +11,8 @@ DaliCam currently provides:
 - camera capture on the device
 - on-device image preview using a canvas/raw-buffer render path
 - prompt-driven image generation and editing
-- personality preset selection
-- model selection for Gemini image models
+- personality preset selection, including a custom preset workflow
+- model selection for Gemini and OpenAI image models
 - galleries for camera photos, generated images, and uploads
 - a WebUI for settings and image management
 - image upload from the browser for testing and comparison
@@ -25,12 +25,25 @@ DaliCam currently provides:
 1. Launch DaliCam on the device.
 2. Open the WebUI in a browser at:
    - `http://<device-ip>:8080`
-3. Set your Gemini API key.
+3. Set your Gemini or OpenAI API key.
 4. Choose a model and personality preset.
 5. Capture, upload, or select an image.
 6. Add an optional prompt and generate.
 
 If you leave the prompt empty, DaliCam uses the selected preset by itself.
+
+Custom preset text can be saved, reused, or deleted from the settings screen and WebUI.
+
+## Media
+
+Demo video: [YouTube Shorts](https://www.youtube.com/shorts/sAD5fTfU66A)
+
+| Launcher | Main screen | AI Gallery |
+| --- | --- | --- |
+| ![DaliCam launcher](screenshot/dalicam-launcher.png) | ![DaliCam main screen](screenshot/dalicam-main-screen.png) | ![DaliCam AI gallery](screenshot/dalicam-ai-gallery.png) |
+| ![DaliCam device settings](screenshot/dalicam-device-settings.png) | ![DaliCam WebUI gallery](screenshot/dalicam-webui-gallery.png) | ![DaliCam WebUI settings](screenshot/dalicam-webui-settings.png) |
+
+These screenshots were captured from the current device and WebUI build.
 
 ## Device user guide
 
@@ -88,7 +101,8 @@ The galleries are intentionally simple: one image at a time, with the selected i
 After a capture, DaliCam asks for confirmation before continuing:
 
 - **Y** keeps the captured photo and uses it
-- **N** cancels and discards the temporary capture
+- **N** saves the captured frame to the gallery and returns to preview mode
+- **Esc** cancels the preview flow
 
 ## WebUI user guide
 
@@ -164,10 +178,11 @@ Current supported Gemini image models include:
 
 Current presets include:
 
-- Dali Dream
+- Salvador Dali
 - Van Gogh
 - Picasso
 - Alex Grey
+- M.C. Escher
 - Vector Sheet
 
 The preset selector is available on both the device and the WebUI.
@@ -189,7 +204,7 @@ Typical paths:
 
 ### Recommended: CardputerZero App Store
 
-The long-term goal is to publish DaliCam in the CardputerZero app store so users can install it directly.
+DaliCam is packaged for the CardputerZero App Store, with store metadata, screenshots, and asset paths kept in sync with the current release build so it is ready for upload.
 
 ### Developer install
 
@@ -200,6 +215,8 @@ Typical build:
 ```bash
 cmake --workflow --preset cp0-cross-package
 ```
+
+If your local CMake is older than the preset minimum, you will need a newer CMake release to run the package workflow.
 
 Typical deploy:
 
@@ -235,15 +252,16 @@ These are the next ideas being considered for later work:
 
 - custom preset text box in the WebUI
 - save a custom preset into the dropdown list
-- OpenAI image generation support and API key field
 - more personality presets
 - on-device gallery polish
 - bulk select in the WebUI
 - better photo management tools
+- preview refresh interval control
 
 ## Notes
 
 - The preview on the device now uses a canvas/raw-buffer path, which fixed the mosaic-style rendering issue.
 - The latest selected, captured, uploaded, or generated image remains available as the active thumbnail.
+- Generation may take up to about a minute depending on the selected model and provider.
 - The WebUI is meant for testing, administration, and image management while still keeping the device usable on its own.
 - The repository is MIT licensed.
