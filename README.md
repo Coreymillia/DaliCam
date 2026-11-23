@@ -23,7 +23,7 @@ DaliCam currently provides:
 ## Quick start
 
 1. Launch DaliCam on the device.
-2. Open the WebUI in a browser at:
+2. From a PC or phone on the same network, open a browser and go to:
    - `http://<device-ip>:8080`
 3. Set your Gemini or OpenAI API key.
 4. Choose a model and personality preset.
