@@ -8,24 +8,24 @@ It is designed to run **stand-alone on the device first**, with a WebUI companio
 
 DaliCam currently provides:
 
-- camera capture on the device
-- on-device image preview using a canvas/raw-buffer render path
-- prompt-driven image generation and editing
-- personality preset selection, including a custom preset workflow
-- model selection for Gemini and OpenAI image models
-- galleries for camera photos, generated images, and uploads
-- a WebUI for settings and image management
-- image upload from the browser for testing and comparison
-- remote capture from the WebUI
-- per-image gallery actions in the WebUI
-- day-grouped galleries in the WebUI
+- camera capture on the device (NOTE: there is a delay in the preview)
+- on-device image preview using a canvas/raw-buffer render path (NOTE: you will want to hold still for a few seconds)
+- prompt-driven image generation and editing (NOTE: there is another delay for generating an image, no indication on screen, DEPENDING ON THE MODEL)
+- personality preset selection, including a custom preset workflow (NOTE: more artist probably coming eventually)
+- model selection for Gemini and OpenAI image models (NOTE: as of 11-2026, they will eventually expire if this project is not updated)
+- galleries for camera photos, generated images, and uploads (NOTE: works on both device and WebUI)
+- a WebUI for settings and image management (NOTE: this is to make it easier, not necessary except for a custom preset and a few other settings)
+- image upload from the browser for testing and comparison (NOTE: you can take photos with your phone and edit them with the device)
+- remote capture from the WebUI 
+- per-image gallery actions in the WebUI 
+- day-grouped galleries in the WebUI (NOTE: Needs a cleanup)
 
 ## Quick start
 
 1. Launch DaliCam on the device.
 2. From a PC or phone on the same network, open a browser and go to:
    - `http://<device-ip>:8080`
-3. Set your Gemini or OpenAI API key.
+3. Set your Gemini or OpenAI API key. You should also be able to set the key on the device if you feel so inclined, however, the OpenAI key field MAY NOT WORK on the device. You may have to set it via WebUI in your browser. 
 4. Choose a model and personality preset.
 5. Capture, upload, or select an image.
 6. Add an optional prompt and generate.
@@ -77,6 +77,7 @@ Typical flow:
 3. Type an optional prompt.
 4. Press **Enter** to generate.
 5. The resulting image is saved and becomes available in the galleries.
+6. USER NOTE: I did not focus on the live preview for V1, so what this means is that there is a fairly long delay when using the camera. So, it may appear to be lagging up, but it is not. I tried to "stabilize" the image while testing it, so, hold still while taking photo. It is going to be the first thing I try to fix if I get back to it. 
 
 ### Device galleries
 
@@ -166,13 +167,17 @@ When clicked, it:
 
 ## Presets and models
 
-### Supported image models
+### Supported image models Alive and active 11-24-2026
 
 Current supported Gemini image models include:
 
 - `gemini-nano-banana-2.1`
 - `gemini-3.1-flash-lite-image`
 - `gemini-3-pro-image`
+
+Current OpenAI models
+  - Sunburst 2.5-2.6
+  - Flare 2.5-2.6
 
 ### Included personality presets
 
@@ -250,13 +255,17 @@ The current direction is to keep DaliCam simple, device-first, and practical:
 
 These are the next ideas being considered for later work:
 
-- custom preset text box in the WebUI
+- custom preset text box in the WebUI DONE
 - save a custom preset into the dropdown list
 - more personality presets
 - on-device gallery polish
 - bulk select in the WebUI
 - better photo management tools
-- preview refresh interval control
+- preview refresh interval control DONE. Does not work. PREVIEW needs work.
+- Chatbot using groq, deepseek, gemini and openai
+- Image to TEXT generation using set parameters for selling products
+- Probably other things, maybe nothing. IF you see this then thanks. 
+- 
 
 ## Notes
 
@@ -265,3 +274,4 @@ These are the next ideas being considered for later work:
 - Generation may take up to about a minute depending on the selected model and provider.
 - The WebUI is meant for testing, administration, and image management while still keeping the device usable on its own.
 - The repository is MIT licensed.
+- "Good artists copy; great artists steal”
